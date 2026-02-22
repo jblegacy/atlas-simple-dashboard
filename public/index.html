@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>System Stats & OpenClaw Monitor</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <!-- Top Stats Bar -->
+        <div class="stats-bar">
+            <div class="stat-card">
+                <div class="stat-value" id="cpu-value">--</div>
+                <div class="stat-label">CPU Load Avg<br>Last avg (4 cores)</div>
+            </div>
+            <div class="stat-card memory">
+                <div class="stat-value" id="memory-value">--</div>
+                <div class="stat-label">Memory<br>used vs total</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="disk-value">--</div>
+                <div class="stat-label">Disk Usage<br>used vs total</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="uptime-value">--</div>
+                <div class="stat-label">System Uptime<br>since boot</div>
+            </div>
+            <div class="stat-card openclaw">
+                <div class="status-indicator" id="openclaw-indicator"></div>
+                <div class="stat-label">OpenClaw Active<br>74 processes + 4k TUI 3.4k CPU</div>
+                <div class="service-detail">Gateway Running...</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="token-value">---</div>
+                <div class="stat-label">Token Usage<br>Haiku vs Sonnet</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="model-value">--</div>
+                <div class="stat-label">Model Usage<br>Current Activity</div>
+            </div>
+        </div>
+
+        <!-- Main Content Area -->
+        <div class="main-content">
+            <!-- Left Panel -->
+            <div class="left-panel">
+                <!-- File Tree -->
+                <div class="panel file-tree-panel">
+                    <div class="panel-header">
+                        <h3>File Tree (~/nope-app)</h3>
+                    </div>
+                    <div class="panel-content" id="file-tree">
+                        <div class="loading">Loading...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Panel -->
+            <div class="right-panel">
+                <!-- Git Log -->
+                <div class="panel git-log-panel">
+                    <div class="panel-header">
+                        <h3>Git Log (Last 20)</h3>
+                    </div>
+                    <div class="panel-content" id="git-log">
+                        <div class="loading">Loading...</div>
+                    </div>
+                </div>
+
+                <!-- Work Queue -->
+                <div class="panel work-queue-panel">
+                    <div class="panel-header">
+                        <h3>Work Queue & Current Tasks</h3>
+                    </div>
+                    <div class="panel-content" id="work-queue">
+                        <div class="loading">Loading...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Bottom Panel -->
+        <div class="bottom-panel">
+            <div class="panel logs-panel">
+                <div class="panel-header">
+                    <h3>Live Logs</h3>
+                    <div class="log-controls">
+                        <span class="log-source active">OpenClaw</span>
+                        <span class="log-source">Gateway</span>
+                    </div>
+                </div>
+                <div class="panel-content" id="live-logs">
+                    <div class="loading">Loading...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Connection Status -->
+    <div class="connection-status" id="connection-status">
+        <div class="status-dot"></div>
+        <span>Connected</span>
+    </div>
+
+    <script src="js/dashboard.js"></script>
+</body>
+</html>
