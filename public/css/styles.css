@@ -186,6 +186,21 @@ body {
     border-left: 3px solid var(--accent-orange);
 }
 
+.stat-card.token-session {
+    border-left: 3px solid var(--accent-green);
+}
+
+.stat-card.token-alltime {
+    border-left: 3px solid var(--accent-yellow);
+}
+
+.token-cost {
+    font-size: 10px;
+    color: var(--accent-yellow);
+    margin-top: 2px;
+    font-weight: 600;
+}
+
 .model-badge {
     font-size: 10px;
     padding: 2px 6px;

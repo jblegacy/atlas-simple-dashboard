@@ -377,20 +377,49 @@ function updateGatewayStatus(status) {
 function updateTokenMetricsDisplay(metrics) {
     if (!metrics) return;
     
-    // Update token usage display
-    const tokenValue = document.getElementById('token-value');
-    if (tokenValue) {
-        const haiku = metrics.haiku.total || 0;
-        const sonnet = metrics.sonnet.total || 0;
-        tokenValue.textContent = `${haiku}/${sonnet}`;
+    // Update session token usage
+    const sessionTokens = document.getElementById('session-tokens');
+    const sessionCost = document.getElementById('session-cost');
+    
+    if (sessionTokens && metrics.session) {
+        const tokens = metrics.session.total?.tokens || 0;
+        sessionTokens.textContent = formatTokens(tokens);
+        
+        if (sessionCost && metrics.session.total) {
+            const cost = metrics.session.total.cost || 0;
+            sessionCost.textContent = `$${cost.toFixed(4)}`;
+        }
     }
     
-    // You could also update costs if you add a cost display element
+    // Update all-time token usage
+    const alltimeTokens = document.getElementById('alltime-tokens');
+    const alltimeCost = document.getElementById('alltime-cost');
+    
+    if (alltimeTokens && metrics.allTime) {
+        const tokens = metrics.allTime.total?.tokens || 0;
+        alltimeTokens.textContent = formatTokens(tokens);
+        
+        if (alltimeCost && metrics.allTime.total) {
+            const cost = metrics.allTime.total.cost || 0;
+            alltimeCost.textContent = `$${cost.toFixed(2)}`;
+        }
+    }
+    
     console.log('💰 Token Metrics:', {
-        haiku: `${metrics.haiku.total} tokens ($${(metrics.haiku.cost || 0).toFixed(2)})`,
-        sonnet: `${metrics.sonnet.total} tokens ($${(metrics.sonnet.cost || 0).toFixed(2)})`,
-        total: `${metrics.total.tokens} tokens ($${(metrics.total.cost || 0).toFixed(2)})`
+        session: `${metrics.session.total?.tokens || 0} tokens ($${(metrics.session.total?.cost || 0).toFixed(4)})`,
+        allTime: `${metrics.allTime.total?.tokens || 0} tokens ($${(metrics.allTime.total?.cost || 0).toFixed(2)})`
     });
+}
+
+// Format large token numbers
+function formatTokens(tokens) {
+    if (tokens >= 1000000) {
+        return (tokens / 1000000).toFixed(1) + 'M';
+    } else if (tokens >= 1000) {
+        return (tokens / 1000).toFixed(1) + 'K';
+    } else {
+        return tokens.toString();
+    }
 }
 
 // Utility: Escape HTML

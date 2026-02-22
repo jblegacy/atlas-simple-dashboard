@@ -37,23 +37,17 @@ let backupMetrics = {
 };
 
 let tokenMetrics = {
-    haiku: {
-        input: 0,
-        output: 0,
-        total: 0,
-        cost: 0
+    session: {
+        haiku: { input: 0, output: 0, total: 0, cost: 0 },
+        sonnet: { input: 0, output: 0, total: 0, cost: 0 },
+        total: { tokens: 0, cost: 0 }
     },
-    sonnet: {
-        input: 0,
-        output: 0,
-        total: 0,
-        cost: 0
+    allTime: {
+        haiku: { input: 0, output: 0, total: 0, cost: 0 },
+        sonnet: { input: 0, output: 0, total: 0, cost: 0 },
+        total: { tokens: 0, cost: 0 }
     },
-    total: {
-        tokens: 0,
-        cost: 0,
-        lastUpdated: new Date()
-    }
+    lastUpdated: new Date()
 };
 
 // Token costs (per million tokens)
@@ -62,6 +56,43 @@ const tokenCosts = {
     'sonnet': { input: 3.00, output: 15.00 },
     'opus': { input: 15.00, output: 75.00 }
 };
+
+// Get real token usage from Anthropic API
+async function fetchAnthropicUsage() {
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    
+    if (!apiKey) {
+        console.log('⚠️  ANTHROPIC_API_KEY not set - using gateway logs fallback');
+        return null;
+    }
+    
+    try {
+        // Fetch usage data from Anthropic
+        const response = await fetch('https://api.anthropic.com/v1/usage', {
+            headers: {
+                'x-api-key': apiKey
+            }
+        });
+        
+        if (!response.ok) {
+            console.log('⚠️  Anthropic API error:', response.status);
+            return null;
+        }
+        
+        const usageData = await response.json();
+        console.log('✅ Fetched Anthropic usage data:', {
+            session_tokens: usageData.session_tokens,
+            account_tokens: usageData.account_tokens,
+            session_cost_usd: usageData.session_cost_usd,
+            account_cost_usd: usageData.account_cost_usd
+        });
+        
+        return usageData;
+    } catch (error) {
+        console.log('⚠️  Error fetching Anthropic usage:', error.message);
+        return null;
+    }
+}
 let projectInfo = {
     name: path.basename(process.cwd()),
     path: process.cwd(),
@@ -325,54 +356,66 @@ function getDefaultWorkQueue() {
   ];
 }
 
-// Get token usage from OpenClaw gateway logs
-function updateTokenMetrics() {
-  // Read gateway logs for token usage patterns
-  exec('grep -i "tokens" /Users/openclaw/.openclaw/logs/gateway.log 2>/dev/null | tail -100 || echo ""', 
-    (error, stdout, stderr) => {
-      if (stdout && stdout.trim()) {
-        const lines = stdout.split('\n');
-        
-        // Parse token usage from logs (example pattern: "tokens: 1500 input, 300 output")
-        lines.forEach(line => {
-          // Look for token patterns in logs
-          const haikusMatch = line.match(/haiku.*?(\d+)\s+input.*?(\d+)\s+output/i);
-          const sonnetMatch = line.match(/sonnet.*?(\d+)\s+input.*?(\d+)\s+output/i);
-          
-          if (haikusMatch) {
-            tokenMetrics.haiku.input += parseInt(haikusMatch[1]) || 0;
-            tokenMetrics.haiku.output += parseInt(haikusMatch[2]) || 0;
-          }
-          if (sonnetMatch) {
-            tokenMetrics.sonnet.input += parseInt(sonnetMatch[1]) || 0;
-            tokenMetrics.sonnet.output += parseInt(sonnetMatch[2]) || 0;
-          }
-        });
-        
-        // Calculate costs
-        tokenMetrics.haiku.total = tokenMetrics.haiku.input + tokenMetrics.haiku.output;
-        tokenMetrics.haiku.cost = 
-          (tokenMetrics.haiku.input * tokenCosts.haiku.input / 1000000) +
-          (tokenMetrics.haiku.output * tokenCosts.haiku.output / 1000000);
-        
-        tokenMetrics.sonnet.total = tokenMetrics.sonnet.input + tokenMetrics.sonnet.output;
-        tokenMetrics.sonnet.cost = 
-          (tokenMetrics.sonnet.input * tokenCosts.sonnet.input / 1000000) +
-          (tokenMetrics.sonnet.output * tokenCosts.sonnet.output / 1000000);
-        
-        tokenMetrics.total.tokens = tokenMetrics.haiku.total + tokenMetrics.sonnet.total;
-        tokenMetrics.total.cost = tokenMetrics.haiku.cost + tokenMetrics.sonnet.cost;
-        tokenMetrics.total.lastUpdated = new Date();
-        
-        console.log('💰 Token metrics updated:', {
-          haiku: `${tokenMetrics.haiku.total} tokens ($${tokenMetrics.haiku.cost.toFixed(2)})`,
-          sonnet: `${tokenMetrics.sonnet.total} tokens ($${tokenMetrics.sonnet.cost.toFixed(2)})`,
-          total: `${tokenMetrics.total.tokens} tokens ($${tokenMetrics.total.cost.toFixed(2)})`
-        });
-        
-        broadcast({ type: 'tokenMetrics', data: tokenMetrics });
-      }
+// Get token usage from Anthropic API
+async function updateTokenMetrics() {
+  const usageData = await fetchAnthropicUsage();
+  
+  if (usageData) {
+    // Update from Anthropic API
+    tokenMetrics.session.total.tokens = usageData.session_tokens || 0;
+    tokenMetrics.session.total.cost = usageData.session_cost_usd || 0;
+    
+    tokenMetrics.allTime.total.tokens = usageData.account_tokens || 0;
+    tokenMetrics.allTime.total.cost = usageData.account_cost_usd || 0;
+    
+    console.log('💰 Real token usage (Anthropic API):', {
+      session: `${tokenMetrics.session.total.tokens} tokens ($${tokenMetrics.session.total.cost.toFixed(4)})`,
+      allTime: `${tokenMetrics.allTime.total.tokens} tokens ($${tokenMetrics.allTime.total.cost.toFixed(2)})`
     });
+  } else {
+    // Fallback: read gateway logs for token usage patterns
+    exec('grep -i "tokens" /Users/openclaw/.openclaw/logs/gateway.log 2>/dev/null | tail -100 || echo ""', 
+      (error, stdout, stderr) => {
+        if (stdout && stdout.trim()) {
+          const lines = stdout.split('\n');
+          
+          // Parse token usage from logs
+          lines.forEach(line => {
+            const haikusMatch = line.match(/haiku.*?(\d+)\s+input.*?(\d+)\s+output/i);
+            const sonnetMatch = line.match(/sonnet.*?(\d+)\s+input.*?(\d+)\s+output/i);
+            
+            if (haikusMatch) {
+              tokenMetrics.session.haiku.input += parseInt(haikusMatch[1]) || 0;
+              tokenMetrics.session.haiku.output += parseInt(haikusMatch[2]) || 0;
+            }
+            if (sonnetMatch) {
+              tokenMetrics.session.sonnet.input += parseInt(sonnetMatch[1]) || 0;
+              tokenMetrics.session.sonnet.output += parseInt(sonnetMatch[2]) || 0;
+            }
+          });
+          
+          // Calculate costs
+          const session = tokenMetrics.session;
+          session.haiku.total = session.haiku.input + session.haiku.output;
+          session.haiku.cost = 
+            (session.haiku.input * tokenCosts.haiku.input / 1000000) +
+            (session.haiku.output * tokenCosts.haiku.output / 1000000);
+          
+          session.sonnet.total = session.sonnet.input + session.sonnet.output;
+          session.sonnet.cost = 
+            (session.sonnet.input * tokenCosts.sonnet.input / 1000000) +
+            (session.sonnet.output * tokenCosts.sonnet.output / 1000000);
+          
+          session.total.tokens = session.haiku.total + session.sonnet.total;
+          session.total.cost = session.haiku.cost + session.sonnet.cost;
+        }
+        
+        console.log('💰 Token metrics updated (from logs)');
+      });
+  }
+  
+  tokenMetrics.lastUpdated = new Date();
+  broadcast({ type: 'tokenMetrics', data: tokenMetrics });
 }
 
 // Get live logs from OpenClaw gateway

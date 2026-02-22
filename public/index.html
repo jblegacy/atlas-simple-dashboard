@@ -56,9 +56,15 @@
                 <div class="stat-label">Current Model<br>claude-3-haiku-20240307</div>
                 <div class="model-badge" id="model-badge">haiku</div>
             </div>
-            <div class="stat-card">
-                <div class="stat-value" id="token-value">---</div>
-                <div class="stat-label">Token Usage<br>Haiku vs Sonnet</div>
+            <div class="stat-card token-session">
+                <div class="stat-value" id="session-tokens">---</div>
+                <div class="stat-label">This Session<br>Token Usage</div>
+                <div class="token-cost" id="session-cost">$0.00</div>
+            </div>
+            <div class="stat-card token-alltime">
+                <div class="stat-value" id="alltime-tokens">---</div>
+                <div class="stat-label">All-Time<br>Token Usage</div>
+                <div class="token-cost" id="alltime-cost">$0.00</div>
             </div>
             <div class="stat-card backup-indicator">
                 <div class="stat-value" id="backup-size">275MB</div>
