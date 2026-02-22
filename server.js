@@ -276,15 +276,15 @@ function updateWorkQueue() {
       });
     }
     
-    // Fetch active OpenClaw processes
-    exec('ps aux | grep openclaw | grep -v grep | wc -l 2>/dev/null || echo "0"', (error, stdout, stderr) => {
-      const processCount = parseInt(stdout) || 0;
+    // Fetch active OpenClaw gateway process specifically
+    exec('ps aux | grep -E "openclaw.*gateway|node.*openclaw" | grep -v grep | wc -l 2>/dev/null || echo "0"', (error, stdout, stderr) => {
+      const gatewayProcessCount = parseInt(stdout) || 0;
       
-      if (processCount > 0) {
+      if (gatewayProcessCount > 0) {
         tasks.unshift({
           id: 0,
-          title: "OpenClaw Gateway & Agents",
-          description: `${processCount} active OpenClaw processes running. Gateway monitoring system metrics, managing agents, and processing tasks.`,
+          title: "OpenClaw Gateway",
+          description: `OpenClaw gateway running. Monitoring system metrics, managing agents, and processing tasks in real-time.`,
           status: "IN_PROGRESS",
           progress: 100,
           eta: "Ongoing"
@@ -292,6 +292,7 @@ function updateWorkQueue() {
       }
       
       workQueue = tasks.length > 0 ? tasks : getDefaultWorkQueue();
+      console.log('📋 Work queue updated:', tasks.length, 'tasks');
       broadcast({ type: 'workQueue', data: workQueue });
     });
   });
