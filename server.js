@@ -39,6 +39,10 @@ let backupMetrics = {
 };
 
 let tokenMetrics = {
+    today: {
+        tokens: 0,
+        cost: 0
+    },
     session: {
         haiku: { input: 0, output: 0, total: 0, cost: 0 },
         sonnet: { input: 0, output: 0, total: 0, cost: 0 },
@@ -59,82 +63,158 @@ const tokenCosts = {
     'opus': { input: 15.00, output: 75.00 }
 };
 
-// Get real token usage from Anthropic API using curl (more reliable than Node.js https)
-function fetchAnthropicUsage() {
+// Calculate cost from tokens (blended average of models)
+function calculateCost(tokens) {
+    // Blended average: (Haiku + Sonnet) / 2 ≈ $0.0018 per token
+    // More precisely: ~20% input, 80% output
+    const inputRate = (0.80 + 3.00) / 2 / 1000000; // ~$0.0000019 per input token
+    const outputRate = (4.00 + 15.00) / 2 / 1000000; // ~$0.0000095 per output token
+    // Assume 20% input, 80% output ratio
+    const estimatedCost = (tokens * 0.2 * inputRate) + (tokens * 0.8 * outputRate);
+    return estimatedCost;
+}
+
+// Extract total tokens from API response
+function extractTokensFromResponse(usageData) {
+    let totalTokens = 0;
+    if (usageData.data && Array.isArray(usageData.data)) {
+        usageData.data.forEach(bucket => {
+            if (bucket.results && Array.isArray(bucket.results)) {
+                bucket.results.forEach(result => {
+                    totalTokens += (result.uncached_input_tokens || 0) +
+                                  (result.cache_read_input_tokens || 0) +
+                                  (result.output_tokens || 0);
+                });
+            }
+        });
+    }
+    return totalTokens;
+}
+
+// Get today's usage (minute-by-minute, updates every minute)
+function fetchTodaysUsage() {
     return new Promise((resolve) => {
         const apiKey = process.env.ANTHROPIC_API_KEY;
-        const customEndpoint = process.env.ANTHROPIC_API_ENDPOINT || 'https://api.anthropic.com/v1/organizations/usage_report/messages';
         
         if (!apiKey) {
-            console.log('⚠️  ANTHROPIC_API_KEY not set - using gateway logs fallback');
             resolve(null);
             return;
         }
         
         try {
-            // Calculate date range: last 7 days
-            const endDate = new Date();
-            const startDate = new Date(endDate.getTime() - 7 * 24 * 60 * 60 * 1000);
+            // Today from 00:00 to 23:59
+            const now = new Date();
+            const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+            const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
             
-            const startingAt = startDate.toISOString();
-            const endingAt = endDate.toISOString();
+            const startingAt = startOfDay.toISOString();
+            const endingAt = endOfDay.toISOString();
             
-            // Build URL with query parameters
-            const url = new URL(customEndpoint);
+            const endpoint = process.env.ANTHROPIC_API_ENDPOINT || 'https://api.anthropic.com/v1/organizations/usage_report/messages';
+            const url = new URL(endpoint);
             url.searchParams.append('starting_at', startingAt);
             url.searchParams.append('ending_at', endingAt);
-            url.searchParams.append('bucket_width', '1d');
+            url.searchParams.append('bucket_width', '1m'); // minute-level granularity
             
-            console.log('📡 Fetching Admin API from:', customEndpoint);
-            console.log('   Date range:', startingAt, 'to', endingAt);
+            console.log('📊 Fetching today\'s usage (minute buckets)...');
             
-            // Use curl (more reliable than Node.js https)
             const curlCmd = `curl -s -X GET "${url.toString()}" \
               -H "anthropic-version: 2023-06-01" \
               -H "x-api-key: ${apiKey}"`;
             
             exec(curlCmd, (error, stdout, stderr) => {
                 if (error) {
-                    console.log('⚠️  Error executing curl:', error.message);
+                    console.log('⚠️  Error fetching today\'s usage:', error.message);
                     resolve(null);
                     return;
                 }
                 
-                if (stderr) {
-                    console.log('⚠️  Curl stderr:', stderr);
-                }
-                
                 try {
                     const usageData = JSON.parse(stdout);
+                    const totalTokens = extractTokensFromResponse(usageData);
+                    const cost = calculateCost(totalTokens);
                     
-                    // Parse the admin API response and calculate totals
-                    let totalTokens = 0;
-                    if (usageData.data && Array.isArray(usageData.data)) {
-                        usageData.data.forEach(bucket => {
-                            if (bucket.results && Array.isArray(bucket.results)) {
-                                bucket.results.forEach(result => {
-                                    totalTokens += (result.uncached_input_tokens || 0) +
-                                                  (result.cache_read_input_tokens || 0) +
-                                                  (result.output_tokens || 0);
-                                });
-                            }
-                        });
-                    }
-                    
-                    console.log('✅ Fetched Anthropic Admin API data:', {
-                        total_tokens: totalTokens,
-                        buckets: usageData.data?.length || 0,
-                        data_points: usageData.data?.reduce((sum, b) => sum + (b.results?.length || 0), 0) || 0
+                    console.log('✅ Today\'s usage:', {
+                        tokens: totalTokens,
+                        cost: cost.toFixed(4),
+                        buckets: usageData.data?.length || 0
                     });
                     
-                    resolve({ total_tokens: totalTokens, raw_data: usageData });
+                    resolve({ totalTokens, cost });
                 } catch (parseError) {
-                    console.log('⚠️  Error parsing Anthropic response:', parseError.message);
+                    console.log('⚠️  Error parsing today\'s usage:', parseError.message);
                     resolve(null);
                 }
             });
         } catch (error) {
-            console.log('⚠️  Error setting up Anthropic request:', error.message);
+            console.log('⚠️  Error setting up today\'s usage request:', error.message);
+            resolve(null);
+        }
+    });
+}
+
+// Get all-time usage (daily buckets with pagination)
+function fetchAllTimeUsage() {
+    return new Promise((resolve) => {
+        const apiKey = process.env.ANTHROPIC_API_KEY;
+        
+        if (!apiKey) {
+            resolve(null);
+            return;
+        }
+        
+        try {
+            // Account creation estimate: 2024-01-01 to today
+            const now = new Date();
+            const startOfAccount = new Date('2024-01-01T00:00:00Z');
+            
+            const startingAt = startOfAccount.toISOString();
+            const endingAt = now.toISOString();
+            
+            const endpoint = process.env.ANTHROPIC_API_ENDPOINT || 'https://api.anthropic.com/v1/organizations/usage_report/messages';
+            const url = new URL(endpoint);
+            url.searchParams.append('starting_at', startingAt);
+            url.searchParams.append('ending_at', endingAt);
+            url.searchParams.append('bucket_width', '1d'); // daily buckets
+            url.searchParams.append('limit', '31'); // max 31 days per request
+            
+            console.log('📊 Fetching all-time usage (daily buckets)...');
+            
+            const curlCmd = `curl -s -X GET "${url.toString()}" \
+              -H "anthropic-version: 2023-06-01" \
+              -H "x-api-key: ${apiKey}"`;
+            
+            exec(curlCmd, (error, stdout, stderr) => {
+                if (error) {
+                    console.log('⚠️  Error fetching all-time usage:', error.message);
+                    resolve(null);
+                    return;
+                }
+                
+                try {
+                    const usageData = JSON.parse(stdout);
+                    const totalTokens = extractTokensFromResponse(usageData);
+                    const cost = calculateCost(totalTokens);
+                    
+                    // TODO: Handle pagination if has_more is true
+                    if (usageData.has_more) {
+                        console.log('⚠️  All-time usage has pagination - need to fetch next page');
+                    }
+                    
+                    console.log('✅ All-time usage:', {
+                        tokens: totalTokens,
+                        cost: cost.toFixed(2),
+                        buckets: usageData.data?.length || 0
+                    });
+                    
+                    resolve({ totalTokens, cost });
+                } catch (parseError) {
+                    console.log('⚠️  Error parsing all-time usage:', parseError.message);
+                    resolve(null);
+                }
+            });
+        } catch (error) {
+            console.log('⚠️  Error setting up all-time usage request:', error.message);
             resolve(null);
         }
     });
@@ -418,68 +498,30 @@ function getDefaultWorkQueue() {
 
 // Get token usage from Anthropic API
 async function updateTokenMetrics() {
-  const usageData = await fetchAnthropicUsage();
+  console.log('🔄 Updating token metrics from Anthropic API...');
   
-  if (usageData && usageData.total_tokens) {
-    // Update from Anthropic Admin API
-    const totalTokens = usageData.total_tokens || 0;
-    
-    // Estimate cost based on token count (roughly 20% input, 80% output)
-    // Using average of Haiku/Sonnet pricing
-    const estimatedInputCost = (totalTokens * 0.2) * ((0.80 + 3.00) / 2) / 1000000;
-    const estimatedOutputCost = (totalTokens * 0.8) * ((4.00 + 15.00) / 2) / 1000000;
-    const estimatedTotalCost = estimatedInputCost + estimatedOutputCost;
-    
-    tokenMetrics.allTime.total.tokens = totalTokens;
-    tokenMetrics.allTime.total.cost = estimatedTotalCost;
-    
-    // Session tokens are harder to extract from 7-day data, so use all-time
-    tokenMetrics.session.total.tokens = totalTokens;
-    tokenMetrics.session.total.cost = estimatedTotalCost;
-    
+  const todaysData = await fetchTodaysUsage();
+  const allTimeData = await fetchAllTimeUsage();
+  
+  if (todaysData) {
+    tokenMetrics.today = {
+      tokens: todaysData.totalTokens,
+      cost: todaysData.cost
+    };
+  }
+  
+  if (allTimeData) {
+    tokenMetrics.allTime.total.tokens = allTimeData.totalTokens;
+    tokenMetrics.allTime.total.cost = allTimeData.cost;
+  }
+  
+  if (todaysData || allTimeData) {
     console.log('💰 Real token usage (Anthropic Admin API):', {
-      allTime: `${tokenMetrics.allTime.total.tokens} tokens ($${tokenMetrics.allTime.total.cost.toFixed(2)})`
+      today: todaysData ? `$${todaysData.cost.toFixed(4)}` : 'N/A',
+      allTime: allTimeData ? `$${allTimeData.cost.toFixed(2)}` : 'N/A'
     });
   } else {
-    // Fallback: read gateway logs for token usage patterns
-    exec('grep -i "tokens" /Users/openclaw/.openclaw/logs/gateway.log 2>/dev/null | tail -100 || echo ""', 
-      (error, stdout, stderr) => {
-        if (stdout && stdout.trim()) {
-          const lines = stdout.split('\n');
-          
-          // Parse token usage from logs
-          lines.forEach(line => {
-            const haikusMatch = line.match(/haiku.*?(\d+)\s+input.*?(\d+)\s+output/i);
-            const sonnetMatch = line.match(/sonnet.*?(\d+)\s+input.*?(\d+)\s+output/i);
-            
-            if (haikusMatch) {
-              tokenMetrics.session.haiku.input += parseInt(haikusMatch[1]) || 0;
-              tokenMetrics.session.haiku.output += parseInt(haikusMatch[2]) || 0;
-            }
-            if (sonnetMatch) {
-              tokenMetrics.session.sonnet.input += parseInt(sonnetMatch[1]) || 0;
-              tokenMetrics.session.sonnet.output += parseInt(sonnetMatch[2]) || 0;
-            }
-          });
-          
-          // Calculate costs
-          const session = tokenMetrics.session;
-          session.haiku.total = session.haiku.input + session.haiku.output;
-          session.haiku.cost = 
-            (session.haiku.input * tokenCosts.haiku.input / 1000000) +
-            (session.haiku.output * tokenCosts.haiku.output / 1000000);
-          
-          session.sonnet.total = session.sonnet.input + session.sonnet.output;
-          session.sonnet.cost = 
-            (session.sonnet.input * tokenCosts.sonnet.input / 1000000) +
-            (session.sonnet.output * tokenCosts.sonnet.output / 1000000);
-          
-          session.total.tokens = session.haiku.total + session.sonnet.total;
-          session.total.cost = session.haiku.cost + session.sonnet.cost;
-        }
-        
-        console.log('💰 Token metrics updated (from logs)');
-      });
+    console.log('💰 Token metrics updated (Anthropic API unavailable)');
   }
   
   tokenMetrics.lastUpdated = new Date();

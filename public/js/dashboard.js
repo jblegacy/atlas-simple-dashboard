@@ -549,37 +549,23 @@ function updateGatewayStatus(status) {
 function updateTokenMetricsDisplay(metrics) {
     if (!metrics) return;
     
-    // Update session token usage
-    const sessionTokens = document.getElementById('session-tokens');
-    const sessionCost = document.getElementById('session-cost');
-    
-    if (sessionTokens && metrics.session) {
-        const tokens = metrics.session.total?.tokens || 0;
-        sessionTokens.textContent = formatTokens(tokens);
-        
-        if (sessionCost && metrics.session.total) {
-            const cost = metrics.session.total.cost || 0;
-            sessionCost.textContent = `$${cost.toFixed(4)}`;
-        }
+    // Today's usage - big number at top
+    const todayCost = document.getElementById('today-cost');
+    if (todayCost && metrics.today) {
+        const cost = metrics.today.cost || 0;
+        todayCost.textContent = `$${cost.toFixed(4)}`;
     }
     
-    // Update all-time token usage
-    const alltimeTokens = document.getElementById('alltime-tokens');
+    // All-time usage - smaller label at bottom
     const alltimeCost = document.getElementById('alltime-cost');
-    
-    if (alltimeTokens && metrics.allTime) {
-        const tokens = metrics.allTime.total?.tokens || 0;
-        alltimeTokens.textContent = formatTokens(tokens);
-        
-        if (alltimeCost && metrics.allTime.total) {
-            const cost = metrics.allTime.total.cost || 0;
-            alltimeCost.textContent = `$${cost.toFixed(2)}`;
-        }
+    if (alltimeCost && metrics.allTime) {
+        const cost = metrics.allTime.total?.cost || 0;
+        alltimeCost.textContent = `All-time: $${cost.toFixed(2)}`;
     }
     
     console.log('💰 Token Metrics:', {
-        session: `${metrics.session.total?.tokens || 0} tokens ($${(metrics.session.total?.cost || 0).toFixed(4)})`,
-        allTime: `${metrics.allTime.total?.tokens || 0} tokens ($${(metrics.allTime.total?.cost || 0).toFixed(2)})`
+        today: metrics.today ? `$${metrics.today.cost.toFixed(4)}` : 'N/A',
+        allTime: `$${(metrics.allTime.total?.cost || 0).toFixed(2)}`
     });
 }
 
