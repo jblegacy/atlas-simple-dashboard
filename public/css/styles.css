@@ -534,6 +534,65 @@ body {
     color: var(--accent-green);
 }
 
+/* Model Usage & Cost by Bot Scorecards */
+.stat-card.model-usage,
+.stat-card.cost-by-bot {
+    background: linear-gradient(135deg, var(--bg-tertiary) 0%, var(--bg-secondary) 100%);
+}
+
+.model-breakdown,
+.bot-breakdown {
+    font-size: 10px;
+    color: var(--text-secondary);
+    margin-top: 6px;
+    font-family: 'JetBrains Mono', monospace;
+}
+
+.bot-breakdown div {
+    line-height: 1.6;
+}
+
+/* Multi-Agent Task Card Colors */
+.work-item.agent-atlas {
+    border-left: 4px solid #4ec9b0;
+    background-color: rgba(78, 201, 176, 0.05);
+}
+
+.work-item.agent-nate {
+    border-left: 4px solid #d4534f;
+    background-color: rgba(212, 83, 79, 0.05);
+}
+
+.work-item.agent-alex {
+    border-left: 4px solid #6a9955;
+    background-color: rgba(106, 153, 85, 0.05);
+}
+
+.agent-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 9px;
+    font-weight: 600;
+    margin-right: 6px;
+    margin-bottom: 4px;
+}
+
+.agent-badge.atlas {
+    background-color: rgba(78, 201, 176, 0.2);
+    color: #4ec9b0;
+}
+
+.agent-badge.nate {
+    background-color: rgba(212, 83, 79, 0.2);
+    color: #d4534f;
+}
+
+.agent-badge.alex {
+    background-color: rgba(106, 153, 85, 0.2);
+    color: #6a9955;
+}
+
 /* API Status Header */
 .api-status-header {
     display: flex;

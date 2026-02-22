@@ -17,6 +17,15 @@ const wss = new WebSocket.Server({ server });
 const CONFIG_DIR = path.join(__dirname, 'config');
 const CONFIG_FILE = path.join(CONFIG_DIR, 'anthropic.json');
 const TASKS_FILE = path.join(CONFIG_DIR, 'tasks.json');
+const AGENTS_FILE = path.join(CONFIG_DIR, 'agents.json');
+const MODEL_HISTORY_FILE = path.join(CONFIG_DIR, 'model-history.json');
+
+// Agent configuration with colors
+const AGENT_CONFIG = {
+    'atlas': { name: 'Atlas', color: '#4ec9b0', bg: 'rgba(78, 201, 176, 0.1)' },
+    'nate': { name: 'Nate', color: '#d4534f', bg: 'rgba(212, 83, 79, 0.1)' },
+    'alex': { name: 'Alex', color: '#6a9955', bg: 'rgba(106, 153, 85, 0.1)' }
+};
 
 // Ensure config directory exists
 if (!fs.existsSync(CONFIG_DIR)) {
@@ -68,6 +77,84 @@ function saveTasks(tasks) {
     } catch (error) {
         console.log('⚠️  Error saving tasks file:', error.message);
     }
+}
+
+// Load model history
+function loadModelHistory() {
+    try {
+        if (fs.existsSync(MODEL_HISTORY_FILE)) {
+            return JSON.parse(fs.readFileSync(MODEL_HISTORY_FILE, 'utf8'));
+        }
+    } catch (error) {
+        console.log('⚠️  Error loading model history:', error.message);
+    }
+    return [];
+}
+
+// Save model history
+function saveModelHistory(history) {
+    try {
+        fs.writeFileSync(MODEL_HISTORY_FILE, JSON.stringify(history, null, 2));
+    } catch (error) {
+        console.log('⚠️  Error saving model history:', error.message);
+    }
+}
+
+// Track model usage
+let modelHistory = loadModelHistory();
+
+function trackModelUsage(agent, model, tokens, cost) {
+    const entry = {
+        timestamp: new Date().toISOString(),
+        agent,
+        model,
+        tokens,
+        cost
+    };
+    
+    modelHistory.push(entry);
+    saveModelHistory(modelHistory);
+    console.log(`✅ Model usage tracked: ${agent} used ${model} (${tokens} tokens)`);
+}
+
+// Calculate model usage percentages (all-time)
+function getModelUsagePercents() {
+    const modelCounts = {};
+    let totalTokens = 0;
+    
+    modelHistory.forEach(entry => {
+        const modelName = entry.model.split('/').pop().split('-')[0]; // Extract "Haiku", "Sonnet", etc
+        modelCounts[modelName] = (modelCounts[modelName] || 0) + entry.tokens;
+        totalTokens += entry.tokens;
+    });
+    
+    const percents = {};
+    Object.entries(modelCounts).forEach(([model, tokens]) => {
+        percents[model] = totalTokens > 0 ? Math.round((tokens / totalTokens) * 100) : 0;
+    });
+    
+    return percents;
+}
+
+// Calculate per-agent costs (all-time)
+function getAgentCosts() {
+    const agentCosts = {};
+    let totalCost = 0;
+    
+    modelHistory.forEach(entry => {
+        agentCosts[entry.agent] = (agentCosts[entry.agent] || 0) + entry.cost;
+        totalCost += entry.cost;
+    });
+    
+    const percents = {};
+    Object.entries(agentCosts).forEach(([agent, cost]) => {
+        percents[agent] = {
+            cost,
+            percent: totalCost > 0 ? Math.round((cost / totalCost) * 100) : 0
+        };
+    });
+    
+    return { agents: percents, total: totalCost };
 }
 
 // Load config on startup
@@ -599,7 +686,11 @@ wss.on('connection', (ws) => {
       backupMetrics,
       projectInfo,
       liveLogs,
+      multiAgentLogs,
       tokenMetrics,
+      modelUsagePercents: getModelUsagePercents(),
+      agentCosts: getAgentCosts(),
+      agentConfig: AGENT_CONFIG,
       gatewayStatus: 'connected',
       apiStatus: {
         apiKeySet: apiKeySet,
@@ -861,6 +952,8 @@ async function updateTokenMetrics() {
 
 // Get live logs from OpenClaw gateway
 let liveLogs = [];
+let multiAgentLogs = {}; // Track logs by agent
+
 function updateLiveLogs() {
   // Get current time minus 10 minutes for filtering recent logs only
   const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
@@ -877,7 +970,17 @@ function updateLiveLogs() {
             else if (line.includes('WARN') || line.includes('warn')) level = 'warning';
             else if (line.includes('DEBUG') || line.includes('debug')) level = 'debug';
             
-            // Try to extract ISO timestamp from log line (e.g., "2026-02-22T15:30:45.123Z")
+            // Extract agent name from log line (e.g., "[atlas]", "[nate]", "[alex]")
+            let agent = 'unknown';
+            const agentMatch = line.match(/\[(\w+)\]/);
+            if (agentMatch) {
+              const possibleAgent = agentMatch[1].toLowerCase();
+              if (AGENT_CONFIG[possibleAgent]) {
+                agent = possibleAgent;
+              }
+            }
+            
+            // Try to extract ISO timestamp from log line
             const isoMatch = line.match(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/);
             let logTime = new Date();
             if (isoMatch) {
@@ -888,6 +991,7 @@ function updateLiveLogs() {
               level,
               message: line,
               timestamp: logTime.toISOString(),
+              agent,
               logTime // For filtering
             };
           })
@@ -900,13 +1004,24 @@ function updateLiveLogs() {
         if (liveLogs.length === 0) {
           liveLogs = [{
             level: 'info',
-            message: 'No activity in the last 10 minutes - Atlas is resting',
-            timestamp: new Date().toISOString()
+            message: 'No activity in the last 10 minutes - all agents resting',
+            timestamp: new Date().toISOString(),
+            agent: 'system'
           }];
         }
         
+        // Group logs by agent for multi-agent tracking
+        multiAgentLogs = {};
+        liveLogs.forEach(log => {
+          if (!multiAgentLogs[log.agent]) {
+            multiAgentLogs[log.agent] = [];
+          }
+          multiAgentLogs[log.agent].push(log);
+        });
+        
         console.log('📋 Live logs updated:', liveLogs.length, 'entries (filtered to last 10 min)');
         broadcast({ type: 'liveLogs', data: liveLogs });
+        broadcast({ type: 'multiAgentLogs', data: multiAgentLogs });
       }
     });
 }
@@ -1121,6 +1236,32 @@ app.post('/api/tasks/delete/:id', (req, res) => {
   updateWorkQueue();
   
   res.json({ success: true, removed: removed[0] });
+});
+
+// Multi-Agent Analytics API
+app.get('/api/analytics/model-usage', (req, res) => {
+  const usage = getModelUsagePercents();
+  res.json({ success: true, data: usage });
+});
+
+app.get('/api/analytics/agent-costs', (req, res) => {
+  const costs = getAgentCosts();
+  res.json({ success: true, data: costs });
+});
+
+app.post('/api/analytics/track-model', (req, res) => {
+  const { agent, model, tokens, cost } = req.body;
+  
+  if (!agent || !model || tokens === undefined) {
+    return res.status(400).json({ error: 'Missing required fields' });
+  }
+  
+  trackModelUsage(agent, model, tokens, cost || 0);
+  res.json({ success: true, message: 'Model usage tracked' });
+});
+
+app.get('/api/analytics/history', (req, res) => {
+  res.json({ success: true, data: modelHistory });
 });
 
 // API Routes

@@ -287,6 +287,19 @@ function updateAllData(data) {
     updateGatewayStatus(data.gatewayStatus);
     updateTokenMetricsDisplay(data.tokenMetrics);
     
+    // Multi-agent analytics
+    if (data.modelUsagePercents) {
+        updateModelUsageDisplay(data.modelUsagePercents);
+    }
+    if (data.agentCosts) {
+        updateAgentCostsDisplay(data.agentCosts);
+    }
+    
+    // Store agent config globally
+    if (data.agentConfig) {
+        window.agentConfig = data.agentConfig;
+    }
+    
     // Check API status if provided
     if (data.apiStatus) {
         updateApiStatus(data.apiStatus.apiKeySet);
@@ -429,8 +442,24 @@ function filterAndRenderWorkQueue() {
         const isManualTask = item.createdAt; // Manual tasks have createdAt
         const statusClass = item.status.toLowerCase();
         
+        // Extract agent from eta or metadata (currently shows "Atlas-generated")
+        let agentClass = 'agent-atlas'; // default
+        let agentBadge = '';
+        
+        if (item.eta && item.eta.includes('generated')) {
+            // Extract agent from task (if stored in metadata)
+            if (item.agent) {
+                const agentName = item.agent.toLowerCase();
+                agentClass = `agent-${agentName}`;
+                agentBadge = `<span class="agent-badge ${agentName}">${item.agent}</span>`;
+            } else {
+                agentBadge = `<span class="agent-badge atlas">Atlas</span>`;
+            }
+        }
+        
         html += `
-            <div class="work-item">
+            <div class="work-item ${agentClass}">
+                ${agentBadge}
                 <div class="work-title">${escapeHtml(item.title)}</div>
                 <div class="work-description">${escapeHtml(item.description)}</div>
                 ${item.progress > 0 ? `
@@ -658,6 +687,61 @@ function updateTokenMetricsDisplay(metrics) {
         yesterday_cumulative: `$${(metrics.allTime.total?.cost || 0).toFixed(2)}`,
         all_time_total: `$${((metrics.allTime.total?.cost || 0) + (metrics.today?.cost || 0)).toFixed(2)}`
     });
+}
+
+// Display model usage percentages (all-time)
+function updateModelUsageDisplay(modelUsage) {
+    const primaryEl = document.getElementById('model-usage-primary');
+    const breakdownEl = document.getElementById('model-breakdown');
+    
+    if (!primaryEl || !breakdownEl) return;
+    
+    // Find dominant model
+    let dominantModel = 'Mixed';
+    let dominantPercent = 0;
+    
+    Object.entries(modelUsage).forEach(([model, percent]) => {
+        if (percent > dominantPercent) {
+            dominantPercent = percent;
+            dominantModel = model.charAt(0).toUpperCase() + model.slice(1);
+        }
+    });
+    
+    primaryEl.textContent = dominantModel;
+    
+    // Build breakdown string
+    const breakdown = Object.entries(modelUsage)
+        .map(([model, percent]) => `${model.charAt(0).toUpperCase() + model.slice(1)}: ${percent}%`)
+        .join(' | ');
+    
+    breakdownEl.textContent = breakdown || 'No data yet';
+    
+    console.log('📊 Model Usage %:', modelUsage);
+}
+
+// Display agent costs breakdown (all-time)
+function updateAgentCostsDisplay(agentCosts) {
+    const totalEl = document.getElementById('cost-by-bot-total');
+    const breakdownEl = document.getElementById('bot-breakdown');
+    
+    if (!totalEl || !breakdownEl) return;
+    
+    const total = agentCosts.total || 0;
+    totalEl.textContent = `$${total.toFixed(2)}`;
+    
+    // Build breakdown HTML
+    let html = '';
+    const agentIcons = { atlas: '🔵', nate: '🔴', alex: '🟢' };
+    
+    Object.entries(agentCosts.agents || {}).forEach(([agent, data]) => {
+        const icon = agentIcons[agent] || '⚪';
+        const percent = data.percent || 0;
+        html += `<div>${icon} ${agent.charAt(0).toUpperCase() + agent.slice(1)}: $${data.cost.toFixed(2)} (${percent}%)</div>`;
+    });
+    
+    breakdownEl.innerHTML = html || '<div>No data yet</div>';
+    
+    console.log('💳 Agent Costs:', agentCosts);
 }
 
 // Format large token numbers
