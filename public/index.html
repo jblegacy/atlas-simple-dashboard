@@ -32,8 +32,13 @@
     </div>
 
     <div class="container">
-        <!-- Top Stats Bar -->
-        <div class="stats-bar">
+        <!-- System Metrics Row (Top) -->
+        <div class="stats-bar stats-top">
+            <div class="stat-card openclaw">
+                <div class="status-indicator" id="openclaw-indicator"></div>
+                <div class="stat-label">OpenClaw Active<br>74 processes + 4k TUI 3.4k CPU</div>
+                <div class="service-detail">Gateway Running...</div>
+            </div>
             <div class="stat-card">
                 <div class="stat-value" id="cpu-value">--</div>
                 <div class="stat-label">CPU Load Avg<br>Last avg (4 cores)</div>
@@ -50,11 +55,10 @@
                 <div class="stat-value" id="uptime-value">--</div>
                 <div class="stat-label">System Uptime<br>since boot</div>
             </div>
-            <div class="stat-card openclaw">
-                <div class="status-indicator" id="openclaw-indicator"></div>
-                <div class="stat-label">OpenClaw Active<br>74 processes + 4k TUI 3.4k CPU</div>
-                <div class="service-detail">Gateway Running...</div>
-            </div>
+        </div>
+
+        <!-- Business Metrics Row (Bottom) -->
+        <div class="stats-bar stats-bottom">
             <div class="stat-card model-indicator">
                 <div class="stat-value" id="model-value">Haiku</div>
                 <div class="stat-label">Current Model<br>claude-3-haiku-20240307</div>
@@ -65,7 +69,6 @@
                 <div class="stat-label">Model Usage<br>(All-Time)</div>
                 <div class="model-breakdown" id="model-breakdown">Sonnet: -% | Haiku: -% | Opus: -%</div>
             </div>
-
             <div class="stat-card cost-by-bot">
                 <div class="stat-value" id="cost-by-bot-total">$0.00</div>
                 <div class="stat-label">Cost by Bot<br>(All-Time)</div>
@@ -75,7 +78,6 @@
                     <div>🟢 Alex: $0.00</div>
                 </div>
             </div>
-
             <div class="stat-card token-alltime">
                 <div class="stat-value" id="today-cost">$0.00</div>
                 <div class="stat-label">Today's Live<br>Usage Cost</div>
