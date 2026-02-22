@@ -576,23 +576,26 @@ function updateGatewayStatus(status) {
 function updateTokenMetricsDisplay(metrics) {
     if (!metrics) return;
     
-    // Today's usage - big number at top
+    // Today's live usage - big number at top
     const todayCost = document.getElementById('today-cost');
     if (todayCost && metrics.today) {
         const cost = metrics.today.cost || 0;
         todayCost.textContent = `$${cost.toFixed(4)}`;
     }
     
-    // All-time usage - smaller label at bottom
+    // Calculate total: yesterday (all-time) + today (live)
     const alltimeCost = document.getElementById('alltime-cost');
-    if (alltimeCost && metrics.allTime) {
-        const cost = metrics.allTime.total?.cost || 0;
-        alltimeCost.textContent = `All-time: $${cost.toFixed(2)}`;
+    if (alltimeCost && metrics.allTime && metrics.today) {
+        const yesterdayTotal = metrics.allTime.total?.cost || 0;
+        const todayTotal = metrics.today.cost || 0;
+        const grandTotal = yesterdayTotal + todayTotal;
+        alltimeCost.textContent = `Total: $${grandTotal.toFixed(2)} (2026 YTD)`;
     }
     
     console.log('💰 Token Metrics:', {
-        today: metrics.today ? `$${metrics.today.cost.toFixed(4)}` : 'N/A',
-        allTime: `$${(metrics.allTime.total?.cost || 0).toFixed(2)}`
+        today_live: metrics.today ? `$${metrics.today.cost.toFixed(4)}` : 'N/A',
+        yesterday_cumulative: `$${(metrics.allTime.total?.cost || 0).toFixed(2)}`,
+        ytd_total: `$${((metrics.allTime.total?.cost || 0) + (metrics.today?.cost || 0)).toFixed(2)}`
     });
 }
 

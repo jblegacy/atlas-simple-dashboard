@@ -171,10 +171,10 @@ function fetchTodaysUsage() {
         }
         
         try {
-            // Today from 00:00 to 23:59
+            // Today from 00:00 UTC to 23:59:59 UTC
             const now = new Date();
-            const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-            const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+            const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0));
+            const endOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 23, 59, 59));
             
             const startingAt = startOfDay.toISOString();
             const endingAt = endOfDay.toISOString();
@@ -226,8 +226,7 @@ function fetchTodaysUsage() {
     });
 }
 
-// Get all-time usage (daily buckets with pagination)
-// accountStartDate can be customized via env var ACCOUNT_START_DATE
+// Get all-time usage (daily buckets through yesterday - complete data only)
 function fetchAllTimeUsage(nextPage = null) {
     return new Promise((resolve) => {
         const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -238,13 +237,16 @@ function fetchAllTimeUsage(nextPage = null) {
         }
         
         try {
-            // Account creation date - customize via env var or default to 2024-01-01
-            const accountStartStr = process.env.ACCOUNT_START_DATE || '2024-01-01T00:00:00Z';
+            // Date range: 2026-01-01 to yesterday (all complete days)
             const now = new Date();
-            const startOfAccount = new Date(accountStartStr);
+            const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0));
+            const yesterday = new Date(startOfDay.getTime() - 24 * 60 * 60 * 1000);
+            const endOfYesterday = new Date(yesterday.getTime() + 23 * 60 * 60 * 1000 + 59 * 60 * 1000 + 59 * 1000);
             
-            const startingAt = startOfAccount.toISOString();
-            const endingAt = now.toISOString();
+            const startOfYear = new Date(Date.UTC(2026, 0, 1, 0, 0, 0));
+            
+            const startingAt = startOfYear.toISOString();
+            const endingAt = endOfYesterday.toISOString();
             
             const endpoint = process.env.ANTHROPIC_API_ENDPOINT || 'https://api.anthropic.com/v1/organizations/usage_report/messages';
             const url = new URL(endpoint);
@@ -258,8 +260,8 @@ function fetchAllTimeUsage(nextPage = null) {
                 url.searchParams.append('page', nextPage);
             }
             
-            console.log(`📊 Fetching all-time usage${nextPage ? ' (page: ' + nextPage + ')' : ''}...`);
-            console.log(`   Date range: ${startOfAccount.toISOString()} to ${now.toISOString()}`);
+            console.log(`📊 Fetching all-time usage (2026-01-01 through yesterday)${nextPage ? ' (page: ' + nextPage + ')' : ''}...`);
+            console.log(`   Date range: ${startingAt} to ${endingAt}`);
             
             const curlCmd = `curl -s -X GET "${url.toString()}" \
               -H "anthropic-version: 2023-06-01" \
