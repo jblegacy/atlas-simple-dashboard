@@ -775,28 +775,50 @@ async function updateTokenMetrics() {
 // Get live logs from OpenClaw gateway
 let liveLogs = [];
 function updateLiveLogs() {
-  exec('tail -30 /Users/openclaw/.openclaw/logs/gateway.log 2>/dev/null || tail -30 /tmp/openclaw/openclaw-*.log 2>/dev/null || echo ""', 
+  // Get current time minus 10 minutes for filtering recent logs only
+  const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
+  
+  exec('tail -100 /Users/openclaw/.openclaw/logs/gateway.log 2>/dev/null || tail -100 /tmp/openclaw/openclaw-*.log 2>/dev/null || echo ""', 
     (error, stdout, stderr) => {
       if (stdout && stdout.trim()) {
         liveLogs = stdout.split('\n')
           .filter(line => line.trim())
           .map((line, index) => {
-            // Parse log line for level
+            // Parse log line for level and timestamp
             let level = 'info';
             if (line.includes('ERROR') || line.includes('error')) level = 'error';
             else if (line.includes('WARN') || line.includes('warn')) level = 'warning';
             else if (line.includes('DEBUG') || line.includes('debug')) level = 'debug';
             
+            // Try to extract ISO timestamp from log line (e.g., "2026-02-22T15:30:45.123Z")
+            const isoMatch = line.match(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/);
+            let logTime = new Date();
+            if (isoMatch) {
+              logTime = new Date(isoMatch[0]);
+            }
+            
             return {
               level,
               message: line,
-              timestamp: new Date().toISOString()
+              timestamp: logTime.toISOString(),
+              logTime // For filtering
             };
           })
+          // Filter to only logs from last 10 minutes
+          .filter(log => log.logTime >= tenMinutesAgo)
           .reverse() // Show newest first
           .slice(0, 20); // Keep last 20 entries
         
-        console.log('📋 Live logs updated:', liveLogs.length, 'entries');
+        // If no recent logs, show a message
+        if (liveLogs.length === 0) {
+          liveLogs = [{
+            level: 'info',
+            message: 'No activity in the last 10 minutes - Atlas is resting',
+            timestamp: new Date().toISOString()
+          }];
+        }
+        
+        console.log('📋 Live logs updated:', liveLogs.length, 'entries (filtered to last 10 min)');
         broadcast({ type: 'liveLogs', data: liveLogs });
       }
     });
