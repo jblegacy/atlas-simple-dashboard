@@ -218,8 +218,30 @@ function fetchTodaysUsage() {
                     return;
                 }
                 
+                // DEBUG: Check if response is empty or error
+                if (!stdout || stdout.length === 0) {
+                    console.log('⚠️  DEBUG: Empty response from today\'s usage API');
+                    resolve(null);
+                    return;
+                }
+                
+                if (stdout.includes('error') || stdout.includes('message')) {
+                    console.log('⚠️  DEBUG: Error response from today\'s usage:', stdout.substring(0, 200));
+                    resolve(null);
+                    return;
+                }
+                
                 try {
                     const usageData = JSON.parse(stdout);
+                    
+                    // DEBUG: Log raw today response
+                    console.log('   🔍 Today Raw API Response:', {
+                        hasData: !!usageData.data,
+                        keys: Object.keys(usageData).slice(0, 10),
+                        error: usageData.error,
+                        dataLength: usageData.data?.length
+                    });
+                    
                     const { dailyBreakdown, totalTokens, totalCost: cost } = extractDailyBreakdown(usageData);
                     
                     // Show minute-by-minute breakdown for today (if available)
@@ -294,8 +316,31 @@ function fetchAllTimeUsage(nextPage = null) {
                     return;
                 }
                 
+                // DEBUG: Check if response is empty or error
+                if (!stdout || stdout.length === 0) {
+                    console.log('⚠️  DEBUG: Empty response from all-time usage API');
+                    resolve(null);
+                    return;
+                }
+                
+                if (stdout.includes('error') || stdout.includes('message')) {
+                    console.log('⚠️  DEBUG: Error response from all-time:', stdout.substring(0, 300));
+                    resolve(null);
+                    return;
+                }
+                
                 try {
                     const usageData = JSON.parse(stdout);
+                    
+                    // DEBUG: Log raw response structure
+                    console.log('   🔍 Raw API Response:', {
+                        hasData: !!usageData.data,
+                        keys: Object.keys(usageData).slice(0, 10),
+                        error: usageData.error,
+                        message: usageData.message,
+                        dataLength: usageData.data?.length
+                    });
+                    
                     const { dailyBreakdown, totalTokens: pageTokens, totalCost: pageCost } = extractDailyBreakdown(usageData);
                     
                     // Debug: show raw response structure
