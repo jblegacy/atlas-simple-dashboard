@@ -21,6 +21,7 @@ let systemMetrics = {};
 let gitLogs = [];
 let fileTree = {};
 let workQueue = [];
+let manualTasks = []; // User-created tasks
 let openclawStatus = 'checking...';
 let currentModel = {
     name: 'Haiku',
@@ -335,9 +336,15 @@ function updateWorkQueue() {
       });
     }
     
-      // Only show actual cron jobs, not infrastructure
-      workQueue = tasks.length > 0 ? tasks : getDefaultWorkQueue();
-      console.log('📋 Work queue updated:', tasks.length, 'cron jobs');
+      // Combine manual tasks with cron jobs (manual tasks first)
+      workQueue = [...manualTasks, ...tasks];
+      
+      // If no tasks at all, show default message
+      if (workQueue.length === 0) {
+        workQueue = getDefaultWorkQueue();
+      }
+      
+      console.log('📋 Work queue updated:', tasks.length, 'cron jobs,', manualTasks.length, 'manual tasks');
       broadcast({ type: 'workQueue', data: workQueue });
   });
 }
@@ -528,6 +535,72 @@ app.post('/api/backup/metrics', (req, res) => {
   
   broadcast({ type: 'backupMetrics', data: backupMetrics });
   res.json({ success: true, metrics: backupMetrics });
+});
+
+// Task Management API
+app.post('/api/tasks/add', (req, res) => {
+  const { title, description, status } = req.body;
+  
+  if (!title || !description || !status) {
+    return res.status(400).json({ error: 'Missing required fields: title, description, status' });
+  }
+  
+  const newTask = {
+    id: Date.now(),
+    title,
+    description,
+    status: status.toUpperCase(),
+    progress: status.toUpperCase() === 'IN_PROGRESS' ? 50 : 0,
+    eta: 'Manual task',
+    createdAt: new Date()
+  };
+  
+  manualTasks.unshift(newTask);
+  console.log('✅ Task added:', title);
+  
+  // Update and broadcast
+  updateWorkQueue();
+  
+  res.json({ success: true, task: newTask });
+});
+
+app.post('/api/tasks/update/:id', (req, res) => {
+  const { id } = req.params;
+  const { title, description, status, progress } = req.body;
+  
+  const task = manualTasks.find(t => t.id == id);
+  if (!task) {
+    return res.status(404).json({ error: 'Task not found' });
+  }
+  
+  if (title) task.title = title;
+  if (description) task.description = description;
+  if (status) task.status = status.toUpperCase();
+  if (progress !== undefined) task.progress = progress;
+  
+  console.log('✅ Task updated:', id);
+  
+  // Update and broadcast
+  updateWorkQueue();
+  
+  res.json({ success: true, task });
+});
+
+app.post('/api/tasks/delete/:id', (req, res) => {
+  const { id } = req.params;
+  
+  const index = manualTasks.findIndex(t => t.id == id);
+  if (index === -1) {
+    return res.status(404).json({ error: 'Task not found' });
+  }
+  
+  const removed = manualTasks.splice(index, 1);
+  console.log('✅ Task deleted:', id);
+  
+  // Update and broadcast
+  updateWorkQueue();
+  
+  res.json({ success: true, removed: removed[0] });
 });
 
 // API Routes

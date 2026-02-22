@@ -6,7 +6,57 @@ const maxReconnectAttempts = 5;
 // Initialize dashboard
 document.addEventListener('DOMContentLoaded', () => {
     connectWebSocket();
+    setupTaskForm();
 });
+
+// Setup task form
+function setupTaskForm() {
+    const titleInput = document.getElementById('task-title');
+    const detailInput = document.getElementById('task-detail');
+    const statusSelect = document.getElementById('task-status');
+    const addBtn = document.getElementById('add-task-btn');
+    
+    if (!addBtn) return;
+    
+    addBtn.addEventListener('click', async () => {
+        const title = titleInput.value.trim();
+        const description = detailInput.value.trim();
+        const status = statusSelect.value;
+        
+        if (!title || !description) {
+            alert('Please fill in task name and details');
+            return;
+        }
+        
+        try {
+            const response = await fetch('/api/tasks/add', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ title, description, status })
+            });
+            
+            if (response.ok) {
+                console.log('✅ Task added successfully');
+                titleInput.value = '';
+                detailInput.value = '';
+                statusSelect.value = 'QUEUED';
+            } else {
+                alert('Error adding task');
+            }
+        } catch (error) {
+            console.error('Error adding task:', error);
+            alert('Error adding task');
+        }
+    });
+    
+    // Allow Enter to submit
+    titleInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') addBtn.click();
+    });
+    detailInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') addBtn.click();
+    });
+}
 
 // WebSocket connection
 function connectWebSocket() {
@@ -202,8 +252,9 @@ function updateWorkQueueUI(queue) {
     
     let html = '';
     queue.forEach(item => {
+        const isManualTask = item.createdAt; // Manual tasks have createdAt
         html += `
-            <div class="work-item">
+            <div class="work-item" ${isManualTask ? `data-task-id="${item.id}"` : ''}>
                 <div class="work-title">${escapeHtml(item.title)}</div>
                 <div class="work-description">${escapeHtml(item.description)}</div>
                 ${item.progress > 0 ? `
@@ -214,12 +265,27 @@ function updateWorkQueueUI(queue) {
                 <div class="work-status">
                     <span class="status-badge ${item.status.toLowerCase().replace('_', '-')}">${item.status}</span>
                     <span>${item.eta}</span>
+                    ${isManualTask ? `<button class="delete-task-btn" onclick="deleteTask(${item.id})">×</button>` : ''}
                 </div>
             </div>
         `;
     });
     
     workQueueDiv.innerHTML = html;
+}
+
+// Delete task
+async function deleteTask(taskId) {
+    if (!confirm('Delete this task?')) return;
+    
+    try {
+        const response = await fetch(`/api/tasks/delete/${taskId}`, { method: 'POST' });
+        if (response.ok) {
+            console.log('✅ Task deleted');
+        }
+    } catch (error) {
+        console.error('Error deleting task:', error);
+    }
 }
 
 // Update OpenClaw status

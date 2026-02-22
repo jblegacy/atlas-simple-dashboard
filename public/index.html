@@ -95,6 +95,16 @@
                     <div class="panel-header">
                         <h3>Work Queue & Current Tasks</h3>
                     </div>
+                    <div class="task-input-form">
+                        <input type="text" id="task-title" placeholder="Task name" maxlength="50">
+                        <input type="text" id="task-detail" placeholder="Details" maxlength="100">
+                        <select id="task-status">
+                            <option value="QUEUED">Queued</option>
+                            <option value="IN_PROGRESS">Running</option>
+                            <option value="FAILED">Failed</option>
+                        </select>
+                        <button id="add-task-btn">Add</button>
+                    </div>
                     <div class="panel-content" id="work-queue">
                         <div class="loading">Loading...</div>
                     </div>
