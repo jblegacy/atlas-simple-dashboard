@@ -118,20 +118,45 @@ function calculateCost(tokens) {
     return estimatedCost;
 }
 
-// Extract total tokens from API response
-function extractTokensFromResponse(usageData) {
+// Extract and breakdown tokens/cost by day from API response
+function extractDailyBreakdown(usageData) {
+    const dailyBreakdown = [];
     let totalTokens = 0;
+    let totalCost = 0;
+    
     if (usageData.data && Array.isArray(usageData.data)) {
         usageData.data.forEach(bucket => {
             if (bucket.results && Array.isArray(bucket.results)) {
                 bucket.results.forEach(result => {
-                    totalTokens += (result.uncached_input_tokens || 0) +
-                                  (result.cache_read_input_tokens || 0) +
-                                  (result.output_tokens || 0);
+                    const dayTokens = (result.uncached_input_tokens || 0) +
+                                     (result.cache_read_input_tokens || 0) +
+                                     (result.output_tokens || 0);
+                    const dayCost = calculateCost(dayTokens);
+                    
+                    totalTokens += dayTokens;
+                    totalCost += dayCost;
+                    
+                    if (dayTokens > 0) { // Only log days with usage
+                        dailyBreakdown.push({
+                            date: bucket.starting_at.split('T')[0],
+                            tokens: dayTokens,
+                            cost: dayCost,
+                            uncached_input: result.uncached_input_tokens || 0,
+                            cache_read: result.cache_read_input_tokens || 0,
+                            output: result.output_tokens || 0
+                        });
+                    }
                 });
             }
         });
     }
+    
+    return { dailyBreakdown, totalTokens, totalCost };
+}
+
+// Extract total tokens from API response (legacy function)
+function extractTokensFromResponse(usageData) {
+    const { totalTokens } = extractDailyBreakdown(usageData);
     return totalTokens;
 }
 
@@ -175,14 +200,18 @@ function fetchTodaysUsage() {
                 
                 try {
                     const usageData = JSON.parse(stdout);
-                    const totalTokens = extractTokensFromResponse(usageData);
-                    const cost = calculateCost(totalTokens);
+                    const { dailyBreakdown, totalTokens, totalCost: cost } = extractDailyBreakdown(usageData);
                     
-                    console.log('✅ Today\'s usage:', {
-                        tokens: totalTokens,
-                        cost: cost.toFixed(4),
-                        buckets: usageData.data?.length || 0
-                    });
+                    // Show minute-by-minute breakdown for today (if available)
+                    if (dailyBreakdown.length > 0) {
+                        console.log('✅ Today\'s usage (minute buckets):', {
+                            totalTokens: totalTokens.toLocaleString(),
+                            cost: cost.toFixed(4),
+                            minutes: dailyBreakdown.length
+                        });
+                    } else {
+                        console.log('✅ Today\'s usage: 0 tokens, $0.00 (no usage yet)');
+                    }
                     
                     resolve({ totalTokens, cost });
                 } catch (parseError) {
@@ -245,28 +274,30 @@ function fetchAllTimeUsage(nextPage = null) {
                 
                 try {
                     const usageData = JSON.parse(stdout);
+                    const { dailyBreakdown, totalTokens: pageTokens, totalCost: pageCost } = extractDailyBreakdown(usageData);
                     
                     // Debug: show raw response structure
                     console.log(`   API returned ${usageData.data?.length || 0} buckets`);
-                    if (usageData.data && usageData.data.length > 0) {
-                        const firstBucket = usageData.data[0];
-                        const lastBucket = usageData.data[usageData.data.length - 1];
-                        console.log(`   First bucket: ${firstBucket.starting_at} (${firstBucket.results?.length || 0} results)`);
-                        console.log(`   Last bucket: ${lastBucket.starting_at} (${lastBucket.results?.length || 0} results)`);
-                        
-                        // Show sample of tokens if available
-                        const sampleResult = firstBucket.results?.[0];
-                        if (sampleResult) {
-                            console.log(`   Sample result:`, {
-                                uncached_input: sampleResult.uncached_input_tokens,
-                                cache_read: sampleResult.cache_read_input_tokens,
-                                output: sampleResult.output_tokens
-                            });
-                        }
-                    }
                     
-                    let totalTokens = extractTokensFromResponse(usageData);
-                    console.log(`   Extracted tokens: ${totalTokens}`);
+                    // Show daily breakdown table for this page
+                    if (dailyBreakdown.length > 0) {
+                        console.log('\n   📊 Daily Breakdown:');
+                        console.log('   ─────────────────────────────────────────────────────────');
+                        console.log('   Date       │  Tokens  │  Cost  │ Uncached │ Cached │ Output');
+                        console.log('   ─────────────────────────────────────────────────────────');
+                        
+                        dailyBreakdown.forEach(day => {
+                            const tokenStr = day.tokens.toString().padEnd(8);
+                            const costStr = `$${day.cost.toFixed(2)}`.padEnd(7);
+                            const uncachedStr = day.uncached_input.toString().padEnd(8);
+                            const cachedStr = day.cache_read.toString().padEnd(7);
+                            const outputStr = day.output.toString();
+                            
+                            console.log(`   ${day.date} │ ${tokenStr}│ ${costStr}│ ${uncachedStr}│ ${cachedStr}│ ${outputStr}`);
+                        });
+                        console.log('   ─────────────────────────────────────────────────────────');
+                        console.log(`   Page Total: ${pageTokens.toLocaleString()} tokens = $${pageCost.toFixed(2)}\n`);
+                    }
                     
                     // Handle pagination recursively
                     if (usageData.has_more && usageData.next_page) {
@@ -274,29 +305,27 @@ function fetchAllTimeUsage(nextPage = null) {
                         // Recursively fetch next page and accumulate
                         fetchAllTimeUsage(usageData.next_page).then((nextPageData) => {
                             if (nextPageData) {
-                                totalTokens += nextPageData.totalTokens;
+                                const totalTokens = pageTokens + nextPageData.totalTokens;
+                                const cost = pageCost + nextPageData.cost;
+                                
+                                console.log('✅ All-time usage (complete):', {
+                                    tokens: totalTokens.toLocaleString(),
+                                    cost: cost.toFixed(2),
+                                    pages: 'multiple'
+                                });
+                                
+                                resolve({ totalTokens, cost });
                             }
-                            const cost = calculateCost(totalTokens);
-                            
-                            console.log('✅ All-time usage (complete):', {
-                                tokens: totalTokens,
-                                cost: cost.toFixed(2),
-                                buckets: usageData.data?.length || 0
-                            });
-                            
-                            resolve({ totalTokens, cost });
                         });
                     } else {
-                        const cost = calculateCost(totalTokens);
-                        
                         console.log('✅ All-time usage:', {
-                            tokens: totalTokens,
-                            cost: cost.toFixed(2),
-                            buckets: usageData.data?.length || 0,
+                            tokens: pageTokens.toLocaleString(),
+                            cost: pageCost.toFixed(2),
+                            days: dailyBreakdown.length,
                             hasMore: usageData.has_more
                         });
                         
-                        resolve({ totalTokens, cost });
+                        resolve({ totalTokens: pageTokens, cost: pageCost });
                     }
                 } catch (parseError) {
                     console.log('⚠️  Error parsing all-time usage:', parseError.message);
