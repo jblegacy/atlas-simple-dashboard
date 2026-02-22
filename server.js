@@ -61,7 +61,7 @@ const tokenCosts = {
 // Get real token usage from Anthropic API
 async function fetchAnthropicUsage() {
     const apiKey = process.env.ANTHROPIC_API_KEY;
-    const customEndpoint = process.env.ANTHROPIC_API_ENDPOINT || 'https://api.anthropic.com/v1/usage';
+    const customEndpoint = process.env.ANTHROPIC_API_ENDPOINT || 'https://api.anthropic.com/v1/organizations/usage_report/messages';
     
     if (!apiKey) {
         console.log('⚠️  ANTHROPIC_API_KEY not set - using gateway logs fallback');
@@ -69,29 +69,53 @@ async function fetchAnthropicUsage() {
     }
     
     try {
-        console.log('📡 Fetching from:', customEndpoint);
+        // Calculate date range: last 7 days
+        const endDate = new Date();
+        const startDate = new Date(endDate.getTime() - 7 * 24 * 60 * 60 * 1000);
         
-        // Fetch usage data from Anthropic (or custom endpoint)
-        const response = await fetch(customEndpoint, {
+        const startingAt = startDate.toISOString();
+        const endingAt = endDate.toISOString();
+        
+        // Build URL with query parameters
+        const url = `${customEndpoint}?starting_at=${startingAt}&ending_at=${endingAt}&bucket_width=1d`;
+        
+        console.log('📡 Fetching from:', url.split('?')[0]);
+        
+        // Fetch usage data from Anthropic Admin API
+        const response = await fetch(url, {
             headers: {
+                'anthropic-version': '2023-06-01',
                 'x-api-key': apiKey
             }
         });
         
         if (!response.ok) {
-            console.log('⚠️  Anthropic API error:', response.status);
+            const errorText = await response.text();
+            console.log(`⚠️  Anthropic API error ${response.status}:`, errorText.substring(0, 100));
             return null;
         }
         
         const usageData = await response.json();
+        
+        // Parse the admin API response and calculate totals
+        let totalTokens = 0;
+        if (usageData.data) {
+            usageData.data.forEach(bucket => {
+                bucket.results?.forEach(result => {
+                    totalTokens += (result.uncached_input_tokens || 0) +
+                                  (result.cache_read_input_tokens || 0) +
+                                  (result.output_tokens || 0);
+                });
+            });
+        }
+        
         console.log('✅ Fetched Anthropic usage data:', {
-            session_tokens: usageData.session_tokens,
-            account_tokens: usageData.account_tokens,
-            session_cost_usd: usageData.session_cost_usd,
-            account_cost_usd: usageData.account_cost_usd
+            total_tokens: totalTokens,
+            buckets: usageData.data?.length || 0,
+            data_points: usageData.data?.reduce((sum, b) => sum + (b.results?.length || 0), 0) || 0
         });
         
-        return usageData;
+        return { total_tokens: totalTokens, raw_data: usageData };
     } catch (error) {
         console.log('⚠️  Error fetching Anthropic usage:', error.message);
         return null;
@@ -378,16 +402,24 @@ function getDefaultWorkQueue() {
 async function updateTokenMetrics() {
   const usageData = await fetchAnthropicUsage();
   
-  if (usageData) {
-    // Update from Anthropic API
-    tokenMetrics.session.total.tokens = usageData.session_tokens || 0;
-    tokenMetrics.session.total.cost = usageData.session_cost_usd || 0;
+  if (usageData && usageData.total_tokens) {
+    // Update from Anthropic Admin API
+    const totalTokens = usageData.total_tokens || 0;
     
-    tokenMetrics.allTime.total.tokens = usageData.account_tokens || 0;
-    tokenMetrics.allTime.total.cost = usageData.account_cost_usd || 0;
+    // Estimate cost based on token count (roughly 20% input, 80% output)
+    // Using average of Haiku/Sonnet pricing
+    const estimatedInputCost = (totalTokens * 0.2) * ((0.80 + 3.00) / 2) / 1000000;
+    const estimatedOutputCost = (totalTokens * 0.8) * ((4.00 + 15.00) / 2) / 1000000;
+    const estimatedTotalCost = estimatedInputCost + estimatedOutputCost;
     
-    console.log('💰 Real token usage (Anthropic API):', {
-      session: `${tokenMetrics.session.total.tokens} tokens ($${tokenMetrics.session.total.cost.toFixed(4)})`,
+    tokenMetrics.allTime.total.tokens = totalTokens;
+    tokenMetrics.allTime.total.cost = estimatedTotalCost;
+    
+    // Session tokens are harder to extract from 7-day data, so use all-time
+    tokenMetrics.session.total.tokens = totalTokens;
+    tokenMetrics.session.total.cost = estimatedTotalCost;
+    
+    console.log('💰 Real token usage (Anthropic Admin API):', {
       allTime: `${tokenMetrics.allTime.total.tokens} tokens ($${tokenMetrics.allTime.total.cost.toFixed(2)})`
     });
   } else {
