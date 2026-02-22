@@ -115,6 +115,12 @@ function calculateCost(tokens) {
     const outputRate = (4.00 + 15.00) / 2 / 1000000; // ~$0.0000095 per output token
     // Assume 20% input, 80% output ratio
     const estimatedCost = (tokens * 0.2 * inputRate) + (tokens * 0.8 * outputRate);
+    
+    // Debug: log if tokens are 0
+    if (tokens === 0) {
+        console.log('⚠️  DEBUG: calculateCost called with 0 tokens');
+    }
+    
     return estimatedCost;
 }
 
@@ -124,8 +130,17 @@ function extractDailyBreakdown(usageData) {
     let totalTokens = 0;
     let totalCost = 0;
     
+    console.log(`   🔍 DEBUG: usageData.data exists? ${!!usageData.data}, length: ${usageData.data?.length || 0}`);
+    
     if (usageData.data && Array.isArray(usageData.data)) {
-        usageData.data.forEach(bucket => {
+        let bucketsWithResults = 0;
+        let bucketsWithoutResults = 0;
+        
+        usageData.data.forEach((bucket, idx) => {
+            const hasResults = bucket.results && bucket.results.length > 0;
+            if (hasResults) bucketsWithResults++;
+            else bucketsWithoutResults++;
+            
             if (bucket.results && Array.isArray(bucket.results)) {
                 bucket.results.forEach(result => {
                     const dayTokens = (result.uncached_input_tokens || 0) +
@@ -135,6 +150,8 @@ function extractDailyBreakdown(usageData) {
                     
                     totalTokens += dayTokens;
                     totalCost += dayCost;
+                    
+                    console.log(`   🔍 DEBUG: Bucket ${idx} (${bucket.starting_at}): ${dayTokens} tokens = $${dayCost.toFixed(4)}`);
                     
                     if (dayTokens > 0) { // Only log days with usage
                         dailyBreakdown.push({
@@ -149,6 +166,9 @@ function extractDailyBreakdown(usageData) {
                 });
             }
         });
+        
+        console.log(`   🔍 DEBUG: Buckets with results: ${bucketsWithResults}, without: ${bucketsWithoutResults}`);
+        console.log(`   🔍 DEBUG: Total extracted: ${totalTokens} tokens = $${totalCost.toFixed(4)}`);
     }
     
     return { dailyBreakdown, totalTokens, totalCost };
