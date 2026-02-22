@@ -76,40 +76,53 @@ async function fetchAnthropicUsage() {
         const startingAt = startDate.toISOString();
         const endingAt = endDate.toISOString();
         
-        // Build URL with query parameters
-        const url = `${customEndpoint}?starting_at=${startingAt}&ending_at=${endingAt}&bucket_width=1d`;
+        // Build URL with query parameters (per Anthropic docs)
+        const url = new URL(customEndpoint);
+        url.searchParams.append('starting_at', startingAt);
+        url.searchParams.append('ending_at', endingAt);
+        url.searchParams.append('bucket_width', '1d');
         
-        console.log('📡 Fetching from:', url.split('?')[0]);
+        console.log('📡 Fetching Admin API from:', customEndpoint);
+        console.log('   Date range:', startingAt, 'to', endingAt);
         
         // Fetch usage data from Anthropic Admin API
-        const response = await fetch(url, {
+        // Per docs: https://platform.claude.com/docs/en/build-with-claude/usage-cost-api
+        const response = await fetch(url.toString(), {
+            method: 'GET',
             headers: {
                 'anthropic-version': '2023-06-01',
-                'x-api-key': apiKey
+                'x-api-key': apiKey,
+                'accept': 'application/json'
             }
         });
         
+        console.log(`   Response status: ${response.status}`);
+        
         if (!response.ok) {
             const errorText = await response.text();
-            console.log(`⚠️  Anthropic API error ${response.status}:`, errorText.substring(0, 100));
+            console.log(`⚠️  Anthropic API error ${response.status}:`, errorText.substring(0, 200));
             return null;
         }
         
         const usageData = await response.json();
         
         // Parse the admin API response and calculate totals
+        // Response format per docs:
+        // { data: [ { starting_at, ending_at, results: [...] }, ... ], has_more, next_page }
         let totalTokens = 0;
-        if (usageData.data) {
+        if (usageData.data && Array.isArray(usageData.data)) {
             usageData.data.forEach(bucket => {
-                bucket.results?.forEach(result => {
-                    totalTokens += (result.uncached_input_tokens || 0) +
-                                  (result.cache_read_input_tokens || 0) +
-                                  (result.output_tokens || 0);
-                });
+                if (bucket.results && Array.isArray(bucket.results)) {
+                    bucket.results.forEach(result => {
+                        totalTokens += (result.uncached_input_tokens || 0) +
+                                      (result.cache_read_input_tokens || 0) +
+                                      (result.output_tokens || 0);
+                    });
+                }
             });
         }
         
-        console.log('✅ Fetched Anthropic usage data:', {
+        console.log('✅ Fetched Anthropic Admin API data:', {
             total_tokens: totalTokens,
             buckets: usageData.data?.length || 0,
             data_points: usageData.data?.reduce((sum, b) => sum + (b.results?.length || 0), 0) || 0
@@ -117,7 +130,10 @@ async function fetchAnthropicUsage() {
         
         return { total_tokens: totalTokens, raw_data: usageData };
     } catch (error) {
-        console.log('⚠️  Error fetching Anthropic usage:', error.message);
+        console.log('⚠️  Error fetching Anthropic usage:');
+        console.log('   Error type:', error.constructor.name);
+        console.log('   Error message:', error.message);
+        console.log('   Error code:', error.code);
         return null;
     }
 }
