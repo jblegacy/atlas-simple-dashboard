@@ -546,11 +546,22 @@ body {
     font-size: 11px;
     color: var(--accent-red);
     position: relative;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.api-status-header:hover {
+    background-color: var(--bg-primary);
+    border-color: var(--accent-orange);
 }
 
 .api-status-header.active {
     border-color: var(--status-active);
     color: var(--status-active);
+}
+
+.api-status-header.active:hover {
+    background-color: rgba(78, 201, 176, 0.1);
 }
 
 .api-status-header .status-dot {
@@ -564,28 +575,6 @@ body {
 .api-status-header.active .status-dot {
     background-color: var(--status-active);
     animation: pulse 1s infinite;
-}
-
-.api-setup-btn {
-    padding: 2px 8px;
-    margin-left: 4px;
-    background-color: var(--bg-primary);
-    color: var(--accent-red);
-    border: 1px solid var(--accent-red);
-    border-radius: 3px;
-    cursor: pointer;
-    font-size: 9px;
-    font-weight: 600;
-    transition: all 0.2s;
-}
-
-.api-setup-btn:hover {
-    background-color: var(--accent-red);
-    color: var(--bg-primary);
-}
-
-.api-status-header.active .api-setup-btn {
-    display: none;
 }
 
 /* Modal Styles */

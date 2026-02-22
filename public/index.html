@@ -20,10 +20,9 @@
                 <span class="agent-label">Agent:</span>
                 <span class="agent-name" id="agent-name">Loading...</span>
             </div>
-            <div class="api-status-header" id="api-status">
+            <div class="api-status-header" id="api-status" style="cursor: pointer;">
                 <div class="status-dot"></div>
                 <span>API Inactive</span>
-                <button class="api-setup-btn" id="api-setup-btn">Configure</button>
             </div>
             <div class="connection-status-header" id="connection-status">
                 <div class="status-dot"></div>
@@ -136,11 +135,11 @@
     <div class="modal" id="api-modal" style="display: none;">
         <div class="modal-content">
             <div class="modal-header">
-                <h2>Configure Anthropic API</h2>
+                <h2 id="modal-title">Configure Anthropic API</h2>
                 <button class="modal-close" id="modal-close">×</button>
             </div>
             <div class="modal-body">
-                <p class="modal-description">
+                <p class="modal-description" id="modal-description">
                     Add your Anthropic API key to enable real-time token usage monitoring and cost tracking in the dashboard.
                 </p>
                 <div class="form-group">
@@ -171,6 +170,7 @@
             <div class="modal-footer">
                 <button class="btn-cancel" id="btn-cancel">Cancel</button>
                 <button class="btn-save" id="btn-save-api">Add API Key</button>
+                <span id="api-mode-indicator" style="display:none; color: var(--text-secondary); font-size: 11px; position: absolute; right: 120px;"></span>
             </div>
         </div>
     </div>

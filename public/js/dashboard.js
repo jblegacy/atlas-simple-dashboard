@@ -32,15 +32,37 @@ function setupTabButtons() {
 // Setup API Modal
 function setupApiModal() {
     const modal = document.getElementById('api-modal');
-    const setupBtn = document.getElementById('api-setup-btn');
+    const apiStatus = document.getElementById('api-status');
     const closeBtn = document.getElementById('modal-close');
     const cancelBtn = document.getElementById('btn-cancel');
     const saveBtn = document.getElementById('btn-save-api');
     const apiKeyInput = document.getElementById('api-key-input');
     const apiEndpointInput = document.getElementById('api-endpoint-input');
+    const modalTitle = document.getElementById('modal-title');
+    const modalDescription = document.getElementById('modal-description');
     
-    // Open modal
-    setupBtn?.addEventListener('click', () => {
+    let isEditMode = false;
+    
+    // Open modal - can click API status at any time
+    apiStatus?.addEventListener('click', () => {
+        const isActive = apiStatus.classList.contains('active');
+        isEditMode = isActive;
+        
+        // Update modal based on mode
+        if (isEditMode) {
+            modalTitle.textContent = 'Update Anthropic API Key';
+            modalDescription.textContent = 'Replace your existing API key with a new one.';
+            saveBtn.textContent = 'Update API Key';
+        } else {
+            modalTitle.textContent = 'Configure Anthropic API';
+            modalDescription.textContent = 'Add your Anthropic API key to enable real-time token usage monitoring and cost tracking in the dashboard.';
+            saveBtn.textContent = 'Add API Key';
+        }
+        
+        // Clear inputs
+        apiKeyInput.value = '';
+        apiEndpointInput.value = '';
+        
         modal.style.display = 'flex';
         apiKeyInput.focus();
     });
@@ -50,6 +72,7 @@ function setupApiModal() {
         modal.style.display = 'none';
         apiKeyInput.value = '';
         apiEndpointInput.value = '';
+        isEditMode = false;
     };
     
     closeBtn?.addEventListener('click', closeModal);
@@ -74,6 +97,7 @@ function setupApiModal() {
         
         try {
             saveBtn.disabled = true;
+            const originalText = saveBtn.textContent;
             saveBtn.textContent = 'Saving...';
             
             const response = await fetch('/api/anthropic/configure', {
@@ -92,7 +116,10 @@ function setupApiModal() {
                 
                 // Wait a moment for backend to pick up the key
                 setTimeout(() => {
-                    alert('✅ API key configured! Token metrics will update shortly.');
+                    const message = isEditMode 
+                        ? '✅ API key updated! Token metrics will refresh shortly.'
+                        : '✅ API key configured! Token metrics will update shortly.';
+                    alert(message);
                 }, 500);
             } else {
                 alert('Error saving API key');
@@ -102,7 +129,7 @@ function setupApiModal() {
             alert('Error saving API key');
         } finally {
             saveBtn.disabled = false;
-            saveBtn.textContent = 'Add API Key';
+            saveBtn.textContent = isEditMode ? 'Update API Key' : 'Add API Key';
         }
     });
     
