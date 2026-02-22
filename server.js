@@ -835,7 +835,7 @@ app.post('/api/tasks/add', (req, res) => {
     description,
     status: status.toUpperCase(),
     progress: status.toUpperCase() === 'IN_PROGRESS' ? 50 : 0,
-    eta: 'Manual task',
+    eta: 'Atlas-generated',
     createdAt: new Date()
   };
   

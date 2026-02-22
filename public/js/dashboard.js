@@ -379,12 +379,12 @@ function updateWorkQueueUI(queue) {
     filterAndRenderWorkQueue();
 }
 
-// Filter tasks by current tab and render
+// Filter tasks by current tab and render with smooth updates
 function filterAndRenderWorkQueue() {
     const workQueueDiv = document.getElementById('work-queue');
     
     if (!allTasks || allTasks.length === 0) {
-        workQueueDiv.innerHTML = '<div class="loading">No tasks</div>';
+        smoothSetHTML(workQueueDiv, '<div class="loading">No tasks</div>');
         return;
     }
     
@@ -392,7 +392,7 @@ function filterAndRenderWorkQueue() {
     const filteredTasks = allTasks.filter(item => item.status === currentTab);
     
     if (filteredTasks.length === 0) {
-        workQueueDiv.innerHTML = `<div class="loading">No ${currentTab.toLowerCase()} tasks</div>`;
+        smoothSetHTML(workQueueDiv, `<div class="loading">No ${currentTab.toLowerCase()} tasks</div>`);
         return;
     }
     
@@ -418,7 +418,25 @@ function filterAndRenderWorkQueue() {
         `;
     });
     
-    workQueueDiv.innerHTML = html;
+    smoothSetHTML(workQueueDiv, html);
+}
+
+// Smooth HTML update with fade transitions (no hard reset)
+function smoothSetHTML(element, newHTML) {
+    if (!element) return;
+    
+    // If content is the same, don't update
+    if (element.innerHTML === newHTML) return;
+    
+    // Fade out slightly
+    element.style.opacity = '0.7';
+    element.style.transition = 'opacity 0.15s ease-in-out';
+    
+    // Update content after fade
+    setTimeout(() => {
+        element.innerHTML = newHTML;
+        element.style.opacity = '1';
+    }, 75);
 }
 
 // Update OpenClaw status
@@ -551,10 +569,10 @@ function updateLiveLogsDisplay(logs) {
         `;
     });
     
-    // Prepend new logs instead of replacing (waterfall effect)
+    // Use smooth update instead of hard reset
     const newContent = html || '<div class="loading">No logs available</div>';
     if (logDiv.innerHTML !== newContent) {
-        logDiv.innerHTML = newContent;
+        smoothSetHTML(logDiv, newContent);
     }
 }
 
