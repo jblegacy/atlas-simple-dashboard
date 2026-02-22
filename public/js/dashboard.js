@@ -112,9 +112,9 @@ function updateSystemMetrics(metrics) {
         document.getElementById('disk-value').textContent = diskValue;
     }
     
-    // Uptime
+    // Uptime (with seconds)
     if (metrics.uptime) {
-        const uptimeValue = `${metrics.uptime.days}d ${metrics.uptime.hours}h${metrics.uptime.minutes}m`;
+        const uptimeValue = `${metrics.uptime.days}d ${metrics.uptime.hours}h${metrics.uptime.minutes}m${metrics.uptime.seconds}s`;
         document.getElementById('uptime-value').textContent = uptimeValue;
     }
 }

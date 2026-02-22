@@ -100,7 +100,8 @@ async function updateSystemMetrics() {
       uptime: {
         days: Math.floor(uptime.uptime / 86400),
         hours: Math.floor((uptime.uptime % 86400) / 3600),
-        minutes: Math.floor((uptime.uptime % 3600) / 60)
+        minutes: Math.floor((uptime.uptime % 3600) / 60),
+        seconds: Math.floor(uptime.uptime % 60)
       },
       timestamp: new Date().toISOString()
     };
@@ -266,7 +267,7 @@ function getDefaultWorkQueue() {
 }
 
 // Update all data periodically
-setInterval(updateSystemMetrics, 5000);      // Every 5 seconds
+setInterval(updateSystemMetrics, 1000);      // Every 1 second (REAL-TIME)
 setInterval(updateGitLogs, 30000);           // Every 30 seconds
 setInterval(updateFileTree, 60000);          // Every 60 seconds
 setInterval(checkOpenClawStatus, 10000);     // Every 10 seconds
