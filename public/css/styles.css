@@ -440,55 +440,16 @@ body {
     flex-direction: column;
 }
 
-.task-input-form {
-    display: grid;
-    grid-template-columns: 1fr 1fr auto auto;
-    gap: clamp(4px, 0.6vmin, 8px);
-    padding: clamp(6px, 0.8vmin, 10px) clamp(8px, 1vmin, 12px);
-    background-color: var(--bg-tertiary);
-    border-bottom: 1px solid var(--border-color);
+.queue-status {
+    font-size: 10px;
+    color: var(--text-secondary);
+    font-weight: 400;
+    animation: pulse-text 2s infinite;
 }
 
-.task-input-form input,
-.task-input-form select {
-    padding: clamp(4px, 0.6vmin, 8px) clamp(6px, 0.8vmin, 10px);
-    background-color: var(--bg-primary);
-    border: 1px solid var(--border-color);
-    color: var(--text-primary);
-    font-family: 'JetBrains Mono', monospace;
-    font-size: clamp(10px, 1vmin, 12px);
-    border-radius: 3px;
-    transition: border-color 0.2s;
-}
-
-.task-input-form input:focus,
-.task-input-form select:focus {
-    outline: none;
-    border-color: var(--accent-blue);
-}
-
-.task-input-form input::placeholder {
-    color: var(--border-color);
-}
-
-#add-task-btn {
-    padding: clamp(4px, 0.6vmin, 8px) clamp(8px, 1vmin, 12px);
-    background-color: var(--accent-blue);
-    color: var(--text-primary);
-    border: none;
-    border-radius: 3px;
-    cursor: pointer;
-    font-weight: 600;
-    font-size: clamp(10px, 1vmin, 12px);
-    transition: background-color 0.2s;
-}
-
-#add-task-btn:hover {
-    background-color: var(--accent-green);
-}
-
-#add-task-btn:active {
-    transform: scale(0.98);
+@keyframes pulse-text {
+    0%, 100% { opacity: 0.6; }
+    50% { opacity: 1; }
 }
 
 /* Task Tabs */
@@ -799,7 +760,20 @@ body {
 .work-item {
     padding: 8px 12px;
     border-bottom: 1px solid var(--border-color);
-    transition: background-color 0.2s;
+    transition: all 0.3s ease-out;
+    animation: slideInLeft 0.4s ease-out;
+    opacity: 1;
+}
+
+@keyframes slideInLeft {
+    from {
+        opacity: 0;
+        transform: translateX(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
 }
 
 .work-item:hover {
@@ -826,20 +800,6 @@ body {
     align-items: center;
     font-size: 10px;
     gap: 6px;
-}
-
-.delete-task-btn {
-    background: none;
-    border: none;
-    color: var(--accent-red);
-    cursor: pointer;
-    font-size: 16px;
-    padding: 0 4px;
-    transition: color 0.2s;
-}
-
-.delete-task-btn:hover {
-    color: var(--accent-orange);
 }
 
 .status-badge {
@@ -884,6 +844,25 @@ body {
     border-bottom: 1px solid var(--border-color);
     font-size: 11px;
     line-height: 1.2;
+    animation: slideDownLog 0.5s ease-out;
+    transition: all 0.3s ease;
+}
+
+@keyframes slideDownLog {
+    from {
+        opacity: 0;
+        max-height: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        max-height: 50px;
+        transform: translateY(0);
+    }
+}
+
+.panel-content {
+    scroll-behavior: smooth;
 }
 
 .log-entry.info {
