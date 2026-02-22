@@ -1,6 +1,7 @@
 const express = require('express');
 const WebSocket = require('ws');
 const http = require('http');
+const https = require('https');
 const path = require('path');
 const fs = require('fs');
 const { exec } = require('child_process');
@@ -58,84 +59,85 @@ const tokenCosts = {
     'opus': { input: 15.00, output: 75.00 }
 };
 
-// Get real token usage from Anthropic API
-async function fetchAnthropicUsage() {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    const customEndpoint = process.env.ANTHROPIC_API_ENDPOINT || 'https://api.anthropic.com/v1/organizations/usage_report/messages';
-    
-    if (!apiKey) {
-        console.log('⚠️  ANTHROPIC_API_KEY not set - using gateway logs fallback');
-        return null;
-    }
-    
-    try {
-        // Calculate date range: last 7 days
-        const endDate = new Date();
-        const startDate = new Date(endDate.getTime() - 7 * 24 * 60 * 60 * 1000);
+// Get real token usage from Anthropic API using curl (more reliable than Node.js https)
+function fetchAnthropicUsage() {
+    return new Promise((resolve) => {
+        const apiKey = process.env.ANTHROPIC_API_KEY;
+        const customEndpoint = process.env.ANTHROPIC_API_ENDPOINT || 'https://api.anthropic.com/v1/organizations/usage_report/messages';
         
-        const startingAt = startDate.toISOString();
-        const endingAt = endDate.toISOString();
-        
-        // Build URL with query parameters (per Anthropic docs)
-        const url = new URL(customEndpoint);
-        url.searchParams.append('starting_at', startingAt);
-        url.searchParams.append('ending_at', endingAt);
-        url.searchParams.append('bucket_width', '1d');
-        
-        console.log('📡 Fetching Admin API from:', customEndpoint);
-        console.log('   Date range:', startingAt, 'to', endingAt);
-        
-        // Fetch usage data from Anthropic Admin API
-        // Per docs: https://platform.claude.com/docs/en/build-with-claude/usage-cost-api
-        const response = await fetch(url.toString(), {
-            method: 'GET',
-            headers: {
-                'anthropic-version': '2023-06-01',
-                'x-api-key': apiKey,
-                'accept': 'application/json'
-            }
-        });
-        
-        console.log(`   Response status: ${response.status}`);
-        
-        if (!response.ok) {
-            const errorText = await response.text();
-            console.log(`⚠️  Anthropic API error ${response.status}:`, errorText.substring(0, 200));
-            return null;
+        if (!apiKey) {
+            console.log('⚠️  ANTHROPIC_API_KEY not set - using gateway logs fallback');
+            resolve(null);
+            return;
         }
         
-        const usageData = await response.json();
-        
-        // Parse the admin API response and calculate totals
-        // Response format per docs:
-        // { data: [ { starting_at, ending_at, results: [...] }, ... ], has_more, next_page }
-        let totalTokens = 0;
-        if (usageData.data && Array.isArray(usageData.data)) {
-            usageData.data.forEach(bucket => {
-                if (bucket.results && Array.isArray(bucket.results)) {
-                    bucket.results.forEach(result => {
-                        totalTokens += (result.uncached_input_tokens || 0) +
-                                      (result.cache_read_input_tokens || 0) +
-                                      (result.output_tokens || 0);
+        try {
+            // Calculate date range: last 7 days
+            const endDate = new Date();
+            const startDate = new Date(endDate.getTime() - 7 * 24 * 60 * 60 * 1000);
+            
+            const startingAt = startDate.toISOString();
+            const endingAt = endDate.toISOString();
+            
+            // Build URL with query parameters
+            const url = new URL(customEndpoint);
+            url.searchParams.append('starting_at', startingAt);
+            url.searchParams.append('ending_at', endingAt);
+            url.searchParams.append('bucket_width', '1d');
+            
+            console.log('📡 Fetching Admin API from:', customEndpoint);
+            console.log('   Date range:', startingAt, 'to', endingAt);
+            
+            // Use curl (more reliable than Node.js https)
+            const curlCmd = `curl -s -X GET "${url.toString()}" \
+              -H "anthropic-version: 2023-06-01" \
+              -H "x-api-key: ${apiKey}"`;
+            
+            exec(curlCmd, (error, stdout, stderr) => {
+                if (error) {
+                    console.log('⚠️  Error executing curl:', error.message);
+                    resolve(null);
+                    return;
+                }
+                
+                if (stderr) {
+                    console.log('⚠️  Curl stderr:', stderr);
+                }
+                
+                try {
+                    const usageData = JSON.parse(stdout);
+                    
+                    // Parse the admin API response and calculate totals
+                    let totalTokens = 0;
+                    if (usageData.data && Array.isArray(usageData.data)) {
+                        usageData.data.forEach(bucket => {
+                            if (bucket.results && Array.isArray(bucket.results)) {
+                                bucket.results.forEach(result => {
+                                    totalTokens += (result.uncached_input_tokens || 0) +
+                                                  (result.cache_read_input_tokens || 0) +
+                                                  (result.output_tokens || 0);
+                                });
+                            }
+                        });
+                    }
+                    
+                    console.log('✅ Fetched Anthropic Admin API data:', {
+                        total_tokens: totalTokens,
+                        buckets: usageData.data?.length || 0,
+                        data_points: usageData.data?.reduce((sum, b) => sum + (b.results?.length || 0), 0) || 0
                     });
+                    
+                    resolve({ total_tokens: totalTokens, raw_data: usageData });
+                } catch (parseError) {
+                    console.log('⚠️  Error parsing Anthropic response:', parseError.message);
+                    resolve(null);
                 }
             });
+        } catch (error) {
+            console.log('⚠️  Error setting up Anthropic request:', error.message);
+            resolve(null);
         }
-        
-        console.log('✅ Fetched Anthropic Admin API data:', {
-            total_tokens: totalTokens,
-            buckets: usageData.data?.length || 0,
-            data_points: usageData.data?.reduce((sum, b) => sum + (b.results?.length || 0), 0) || 0
-        });
-        
-        return { total_tokens: totalTokens, raw_data: usageData };
-    } catch (error) {
-        console.log('⚠️  Error fetching Anthropic usage:');
-        console.log('   Error type:', error.constructor.name);
-        console.log('   Error message:', error.message);
-        console.log('   Error code:', error.code);
-        return null;
-    }
+    });
 }
 let projectInfo = {
     name: path.basename(process.cwd()),
