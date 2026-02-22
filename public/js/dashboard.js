@@ -143,14 +143,14 @@ function updateApiStatus(isActive) {
     
     if (isActive) {
         console.log('✅ API is now ACTIVE');
-        apiStatus?.classList.add('active');
+        if (apiStatus) apiStatus.classList.add('active');
         if (statusSpan) statusSpan.textContent = 'API Active';
-        setupBtn?.style.display = 'none';
+        if (setupBtn) setupBtn.style.display = 'none';
     } else {
         console.log('⚠️  API is INACTIVE');
-        apiStatus?.classList.remove('active');
+        if (apiStatus) apiStatus.classList.remove('active');
         if (statusSpan) statusSpan.textContent = 'API Inactive';
-        setupBtn?.style.display = 'block';
+        if (setupBtn) setupBtn.style.display = 'block';
     }
 }
 
