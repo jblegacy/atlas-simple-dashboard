@@ -95,6 +95,13 @@ let manualTasks = []; // User-created tasks
 // Load tasks on startup (after declaration)
 manualTasks = loadTasks();
 let openclawStatus = 'checking...';
+let openclawStats = {
+  status: 'inactive',
+  processCount: 0,
+  cpuUsage: 0,
+  memUsage: 0,
+  gatewayRunning: false
+};
 let currentModel = {
     name: 'Haiku',
     version: 'claude-3-haiku-20240307',
@@ -506,6 +513,62 @@ function getAgentName() {
     return fallback;
 }
 
+// Detect actual model from OpenClaw config
+function detectActualModel() {
+    try {
+        const configPath = path.join(process.env.HOME || '/Users/openclaw', '.openclaw/openclaw.json');
+        
+        if (!fs.existsSync(configPath)) {
+            return null;
+        }
+        
+        const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        
+        // Get the default model from runtime config
+        const defaultModel = config.agents?.defaults?.model?.default || 
+                            config.runtime?.model?.default ||
+                            config.model?.default;
+        
+        if (!defaultModel) {
+            return null;
+        }
+        
+        // Map full model path to display info
+        const modelMap = {
+            'anthropic/claude-haiku-4-5-20251001': { name: 'Haiku', version: 'claude-haiku-4-5-20251001', badge: 'haiku', costSavings: '80%' },
+            'anthropic/claude-3-haiku-20240307': { name: 'Haiku', version: 'claude-3-haiku-20240307', badge: 'haiku', costSavings: '80%' },
+            'anthropic/claude-sonnet-4-20250514': { name: 'Sonnet', version: 'claude-sonnet-4-20250514', badge: 'sonnet', costSavings: '0%' },
+            'anthropic/claude-opus-4-6': { name: 'Opus', version: 'claude-opus-4-6', badge: 'opus', costSavings: '-50%' }
+        };
+        
+        if (modelMap[defaultModel]) {
+            console.log(`✅ Detected OpenClaw model from config: ${modelMap[defaultModel].name}`);
+            return modelMap[defaultModel];
+        }
+    } catch (error) {
+        console.log('ℹ️  Could not detect model from config:', error.message);
+    }
+    
+    return null;
+}
+
+// Set initial model from OpenClaw config
+const detectedModel = detectActualModel();
+if (detectedModel) {
+    currentModel = detectedModel;
+    console.log(`✅ Using model: ${currentModel.name}`);
+}
+
+// Periodically check for model changes
+setInterval(() => {
+    const newModel = detectActualModel();
+    if (newModel && newModel.name !== currentModel.name) {
+        console.log(`✅ Model changed: ${currentModel.name} → ${newModel.name}`);
+        currentModel = newModel;
+        broadcast({ type: 'modelUpdate', data: currentModel });
+    }
+}, 30000); // Check every 30 seconds
+
 // WebSocket connections
 const clients = new Set();
 
@@ -531,6 +594,7 @@ wss.on('connection', (ws) => {
       fileTree,
       workQueue,
       openclawStatus,
+      openclawStats,
       currentModel,
       backupMetrics,
       projectInfo,
@@ -664,11 +728,34 @@ function updateFileTree() {
   broadcast({ type: 'fileTree', data: fileTree });
 }
 
-// Check OpenClaw status
+// Check OpenClaw status with process and gateway info
 function checkOpenClawStatus() {
-  exec('ps aux | grep openclaw | grep -v grep', (error, stdout, stderr) => {
-    openclawStatus = stdout ? 'active' : 'inactive';
-    broadcast({ type: 'openclawStatus', data: openclawStatus });
+  // Get process count and CPU usage
+  exec('ps aux | grep -E "(openclaw|node.*gateway)" | grep -v grep | wc -l', (error, procCount) => {
+    const processCount = parseInt(procCount.trim()) || 0;
+    
+    // Check if gateway is running
+    exec('ps aux | grep "gateway" | grep -v grep | head -1', (error, gatewayLine) => {
+      const gatewayRunning = gatewayLine && gatewayLine.trim().length > 0;
+      
+      // Get CPU/memory of OpenClaw processes
+      exec('ps aux | grep -E "(openclaw|node.*gateway)" | grep -v grep | awk \'{cpu+=$3; mem+=$4} END {print cpu, mem}\'', (error, stats) => {
+        const [cpuUsage, memUsage] = stats.trim().split(' ') || ['0', '0'];
+        
+        openclawStatus = processCount > 0 ? 'active' : 'inactive';
+        openclawStats = {
+          status: openclawStatus,
+          processCount: processCount,
+          cpuUsage: parseFloat(cpuUsage).toFixed(1),
+          memUsage: parseFloat(memUsage).toFixed(1),
+          gatewayRunning: gatewayRunning
+        };
+        
+        console.log(`✅ OpenClaw status: ${processCount} processes, CPU: ${cpuUsage}%, Memory: ${memUsage}%, Gateway: ${gatewayRunning ? 'running' : 'stopped'}`);
+        
+        broadcast({ type: 'openclawStatus', data: openclawStats });
+      });
+    });
   });
 }
 

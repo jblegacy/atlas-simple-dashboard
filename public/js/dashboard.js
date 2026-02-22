@@ -241,6 +241,9 @@ function handleMessage(data) {
         case 'openclawStatus':
             updateOpenClawStatus(data.data);
             break;
+        case 'openclawStats':
+            updateOpenClawStatus(data.data);
+            break;
         case 'modelUpdate':
             updateModelDisplay(data.data);
             break;
@@ -268,7 +271,14 @@ function updateAllData(data) {
     updateGitLogs(data.gitLogs);
     updateFileTreeUI(data.fileTree, data.projectInfo);
     updateWorkQueueUI(data.workQueue);
-    updateOpenClawStatus(data.openclawStatus);
+    
+    // Use openclawStats if available, otherwise fall back to openclawStatus
+    if (data.openclawStats) {
+        updateOpenClawStatus(data.openclawStats);
+    } else {
+        updateOpenClawStatus(data.openclawStatus);
+    }
+    
     updateModelDisplay(data.currentModel);
     updateBackupMetrics(data.backupMetrics);
     updateProjectInfo(data.projectInfo);
@@ -458,16 +468,28 @@ function smoothSetHTML(element, newHTML) {
 }
 
 // Update OpenClaw status
-function updateOpenClawStatus(status) {
+function updateOpenClawStatus(stats) {
     const indicator = document.querySelector('.status-indicator');
     const label = document.querySelector('.stat-card.openclaw .stat-label');
+    const detail = document.querySelector('.stat-card.openclaw .service-detail');
     
     if (indicator) {
-        indicator.style.backgroundColor = status === 'active' ? '#4ec9b0' : '#858585';
+        // Handle both old format (string) and new format (object)
+        const isActive = typeof stats === 'string' ? stats === 'active' : stats.status === 'active';
+        indicator.style.backgroundColor = isActive ? '#4ec9b0' : '#858585';
     }
     
-    if (label) {
-        label.textContent = `OpenClaw ${status}\n74 processes + 4k TUI 3.4k CPU`;
+    if (label && typeof stats === 'object') {
+        const procCount = stats.processCount || 0;
+        const cpuUsage = stats.cpuUsage || '0';
+        const memUsage = stats.memUsage || '0';
+        label.textContent = `OpenClaw ${stats.status}\n${procCount} processes | CPU: ${cpuUsage}% | Mem: ${memUsage}%`;
+    } else if (label && typeof stats === 'string') {
+        label.textContent = `OpenClaw ${stats}\n74 processes + 4k TUI 3.4k CPU`;
+    }
+    
+    if (detail && typeof stats === 'object') {
+        detail.textContent = stats.gatewayRunning ? 'Gateway Running ✅' : 'Gateway Stopped ⚠️';
     }
 }
 
@@ -576,21 +598,24 @@ function updateLiveLogsDisplay(logs) {
     const logDiv = document.getElementById('live-logs');
     if (!logDiv) return;
     
-    // Reverse to show newest first (waterfall effect)
+    // Build log entries
     let html = '';
-    [...logs].reverse().forEach(log => {
-        html += `
-            <div class="log-entry ${log.level}">
-                <span class="log-timestamp">${new Date(log.timestamp).toLocaleTimeString()}</span>
-                ${escapeHtml(log.message)}
-            </div>
-        `;
-    });
+    if (logs && logs.length > 0) {
+        logs.forEach(log => {
+            html += `
+                <div class="log-entry ${log.level}">
+                    <span class="log-timestamp">${new Date(log.timestamp).toLocaleTimeString()}</span>
+                    ${escapeHtml(log.message)}
+                </div>
+            `;
+        });
+    } else {
+        html = '<div class="loading">No recent activity</div>';
+    }
     
     // Use smooth update instead of hard reset
-    const newContent = html || '<div class="loading">No logs available</div>';
-    if (logDiv.innerHTML !== newContent) {
-        smoothSetHTML(logDiv, newContent);
+    if (logDiv.innerHTML !== html) {
+        smoothSetHTML(logDiv, html);
     }
 }
 
