@@ -20,6 +20,11 @@
                 <span class="agent-label">Agent:</span>
                 <span class="agent-name" id="agent-name">Loading...</span>
             </div>
+            <div class="api-status-header" id="api-status">
+                <div class="status-dot"></div>
+                <span>API Inactive</span>
+                <button class="api-setup-btn" id="api-setup-btn">Configure</button>
+            </div>
             <div class="connection-status-header" id="connection-status">
                 <div class="status-dot"></div>
                 <span>Gateway Active</span>
@@ -99,11 +104,18 @@
                         <input type="text" id="task-title" placeholder="Task name" maxlength="50">
                         <input type="text" id="task-detail" placeholder="Details" maxlength="100">
                         <select id="task-status">
-                            <option value="QUEUED">Queued</option>
-                            <option value="IN_PROGRESS">Running</option>
-                            <option value="FAILED">Failed</option>
+                            <option value="ACTIVE">Active</option>
+                            <option value="STUCK">Stuck</option>
+                            <option value="ERROR">Error</option>
+                            <option value="COMPLETE">Complete</option>
                         </select>
                         <button id="add-task-btn">Add</button>
+                    </div>
+                    <div class="task-tabs">
+                        <button class="tab-btn active" data-tab="ACTIVE">ACTIVE</button>
+                        <button class="tab-btn" data-tab="STUCK">STUCK</button>
+                        <button class="tab-btn" data-tab="ERROR">ERROR</button>
+                        <button class="tab-btn" data-tab="COMPLETE">COMPLETE</button>
                     </div>
                     <div class="panel-content" id="work-queue">
                         <div class="loading">Loading...</div>
@@ -131,6 +143,49 @@
                 <div class="panel-content" id="live-logs">
                     <div class="loading">Loading...</div>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- API Key Modal -->
+    <div class="modal" id="api-modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Configure Anthropic API</h2>
+                <button class="modal-close" id="modal-close">×</button>
+            </div>
+            <div class="modal-body">
+                <p class="modal-description">
+                    Add your Anthropic API key to enable real-time token usage monitoring and cost tracking in the dashboard.
+                </p>
+                <div class="form-group">
+                    <label for="api-key-input">API Key</label>
+                    <input 
+                        type="password" 
+                        id="api-key-input" 
+                        placeholder="sk-ant-..." 
+                        class="api-key-input"
+                    >
+                    <p class="help-text">
+                        Your API key is stored securely on the backend and never exposed on the frontend.
+                    </p>
+                </div>
+                <div class="form-group">
+                    <label for="api-endpoint-input">Custom Endpoint (Optional)</label>
+                    <input 
+                        type="text" 
+                        id="api-endpoint-input" 
+                        placeholder="https://api.anthropic.com/v1/usage" 
+                        class="api-endpoint-input"
+                    >
+                    <p class="help-text">
+                        Leave blank to use Anthropic's default API endpoint.
+                    </p>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-cancel" id="btn-cancel">Cancel</button>
+                <button class="btn-save" id="btn-save-api">Add API Key</button>
             </div>
         </div>
     </div>

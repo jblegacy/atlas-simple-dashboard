@@ -61,6 +61,7 @@ const tokenCosts = {
 // Get real token usage from Anthropic API
 async function fetchAnthropicUsage() {
     const apiKey = process.env.ANTHROPIC_API_KEY;
+    const customEndpoint = process.env.ANTHROPIC_API_ENDPOINT || 'https://api.anthropic.com/v1/usage';
     
     if (!apiKey) {
         console.log('⚠️  ANTHROPIC_API_KEY not set - using gateway logs fallback');
@@ -68,8 +69,10 @@ async function fetchAnthropicUsage() {
     }
     
     try {
-        // Fetch usage data from Anthropic
-        const response = await fetch('https://api.anthropic.com/v1/usage', {
+        console.log('📡 Fetching from:', customEndpoint);
+        
+        // Fetch usage data from Anthropic (or custom endpoint)
+        const response = await fetch(customEndpoint, {
             headers: {
                 'x-api-key': apiKey
             }
@@ -163,6 +166,10 @@ wss.on('connection', (ws) => {
   console.log('  - gitLogs:', gitLogs.length);
   console.log('  - systemMetrics:', !!systemMetrics.cpu);
   
+  // Check if API is configured
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKeySet = apiKey && apiKey !== 'your_anthropic_api_key_here' && apiKey.length > 10;
+  
   // Send initial data
   ws.send(JSON.stringify({
     type: 'initial',
@@ -177,7 +184,11 @@ wss.on('connection', (ws) => {
       projectInfo,
       liveLogs,
       tokenMetrics,
-      gatewayStatus: 'connected'
+      gatewayStatus: 'connected',
+      apiStatus: {
+        apiKeySet: apiKeySet,
+        endpoint: process.env.ANTHROPIC_API_ENDPOINT || 'https://api.anthropic.com/v1/usage'
+      }
     }
   }));
 
@@ -535,6 +546,53 @@ app.post('/api/backup/metrics', (req, res) => {
   
   broadcast({ type: 'backupMetrics', data: backupMetrics });
   res.json({ success: true, metrics: backupMetrics });
+});
+
+// Configure Anthropic API endpoint
+app.post('/api/anthropic/configure', (req, res) => {
+  const { apiKey, endpoint } = req.body;
+  
+  if (apiKey) {
+    process.env.ANTHROPIC_API_KEY = apiKey;
+    console.log('✅ Anthropic API key updated');
+  }
+  
+  if (endpoint) {
+    process.env.ANTHROPIC_API_ENDPOINT = endpoint;
+    console.log('✅ Anthropic API endpoint updated to:', endpoint);
+  }
+  
+  const isConfigured = process.env.ANTHROPIC_API_KEY && 
+                       process.env.ANTHROPIC_API_KEY !== 'your_anthropic_api_key_here' &&
+                       process.env.ANTHROPIC_API_KEY.length > 10;
+  
+  // Broadcast API status to all clients
+  broadcast({ 
+    type: 'apiStatus', 
+    data: { 
+      apiKeySet: isConfigured,
+      endpoint: process.env.ANTHROPIC_API_ENDPOINT || 'https://api.anthropic.com/v1/usage'
+    } 
+  });
+  
+  res.json({ 
+    success: true, 
+    config: {
+      endpoint: process.env.ANTHROPIC_API_ENDPOINT || 'https://api.anthropic.com/v1/usage',
+      apiKeySet: isConfigured
+    }
+  });
+});
+
+// Get Anthropic configuration
+app.get('/api/anthropic/config', (req, res) => {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const isConfigured = apiKey && apiKey !== 'your_anthropic_api_key_here' && apiKey.length > 10;
+  
+  res.json({
+    endpoint: process.env.ANTHROPIC_API_ENDPOINT || 'https://api.anthropic.com/v1/usage',
+    apiKeySet: isConfigured
+  });
 });
 
 // Task Management API

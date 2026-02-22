@@ -2,12 +2,157 @@
 let ws = null;
 let reconnectAttempts = 0;
 const maxReconnectAttempts = 5;
+let allTasks = [];
+let currentTab = 'ACTIVE';
 
 // Initialize dashboard
 document.addEventListener('DOMContentLoaded', () => {
     connectWebSocket();
     setupTaskForm();
+    setupTabButtons();
+    setupApiModal();
+    checkApiStatus();
 });
+
+// Setup tab buttons
+function setupTabButtons() {
+    const tabBtns = document.querySelectorAll('.tab-btn');
+    tabBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            // Update active button
+            tabBtns.forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            
+            // Update current tab and rerender
+            currentTab = btn.dataset.tab;
+            filterAndRenderWorkQueue();
+        });
+    });
+}
+
+// Setup API Modal
+function setupApiModal() {
+    const modal = document.getElementById('api-modal');
+    const setupBtn = document.getElementById('api-setup-btn');
+    const closeBtn = document.getElementById('modal-close');
+    const cancelBtn = document.getElementById('btn-cancel');
+    const saveBtn = document.getElementById('btn-save-api');
+    const apiKeyInput = document.getElementById('api-key-input');
+    const apiEndpointInput = document.getElementById('api-endpoint-input');
+    
+    // Open modal
+    setupBtn?.addEventListener('click', () => {
+        modal.style.display = 'flex';
+        apiKeyInput.focus();
+    });
+    
+    // Close modal
+    const closeModal = () => {
+        modal.style.display = 'none';
+        apiKeyInput.value = '';
+        apiEndpointInput.value = '';
+    };
+    
+    closeBtn?.addEventListener('click', closeModal);
+    cancelBtn?.addEventListener('click', closeModal);
+    
+    // Click outside modal to close
+    modal?.addEventListener('click', (e) => {
+        if (e.target === modal) {
+            closeModal();
+        }
+    });
+    
+    // Save API key
+    saveBtn?.addEventListener('click', async () => {
+        const apiKey = apiKeyInput.value.trim();
+        const endpoint = apiEndpointInput.value.trim();
+        
+        if (!apiKey) {
+            alert('Please enter an API key');
+            return;
+        }
+        
+        try {
+            saveBtn.disabled = true;
+            saveBtn.textContent = 'Saving...';
+            
+            const response = await fetch('/api/anthropic/configure', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    apiKey,
+                    endpoint: endpoint || undefined
+                })
+            });
+            
+            if (response.ok) {
+                console.log('✅ API key saved');
+                closeModal();
+                checkApiStatus();
+                
+                // Wait a moment for backend to pick up the key
+                setTimeout(() => {
+                    alert('✅ API key configured! Token metrics will update shortly.');
+                }, 500);
+            } else {
+                alert('Error saving API key');
+            }
+        } catch (error) {
+            console.error('Error saving API key:', error);
+            alert('Error saving API key');
+        } finally {
+            saveBtn.disabled = false;
+            saveBtn.textContent = 'Add API Key';
+        }
+    });
+    
+    // Allow Enter to submit
+    apiKeyInput?.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') saveBtn?.click();
+    });
+    apiEndpointInput?.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') saveBtn?.click();
+    });
+}
+
+// Check if API is configured
+async function checkApiStatus() {
+    try {
+        const response = await fetch('/api/anthropic/config');
+        const config = await response.json();
+        
+        console.log('📡 API Status:', config);
+        
+        if (config.apiKeySet) {
+            updateApiStatus(true);
+        } else {
+            updateApiStatus(false);
+        }
+    } catch (error) {
+        console.error('Error checking API status:', error);
+        updateApiStatus(false);
+    }
+}
+
+// Update API status indicator
+function updateApiStatus(isActive) {
+    const apiStatus = document.getElementById('api-status');
+    const setupBtn = document.getElementById('api-setup-btn');
+    const statusSpan = apiStatus?.querySelector('span');
+    
+    if (isActive) {
+        console.log('✅ API is now ACTIVE');
+        apiStatus?.classList.add('active');
+        if (statusSpan) statusSpan.textContent = 'API Active';
+        setupBtn?.style.display = 'none';
+    } else {
+        console.log('⚠️  API is INACTIVE');
+        apiStatus?.classList.remove('active');
+        if (statusSpan) statusSpan.textContent = 'API Inactive';
+        setupBtn?.style.display = 'block';
+    }
+}
 
 // Setup task form
 function setupTaskForm() {
@@ -134,6 +279,9 @@ function handleMessage(data) {
         case 'tokenMetrics':
             updateTokenMetricsDisplay(data.data);
             break;
+        case 'apiStatus':
+            updateApiStatus(data.data.apiKeySet);
+            break;
     }
 }
 
@@ -151,6 +299,13 @@ function updateAllData(data) {
     updateLiveLogsDisplay(data.liveLogs);
     updateGatewayStatus(data.gatewayStatus);
     updateTokenMetricsDisplay(data.tokenMetrics);
+    
+    // Check API status if provided
+    if (data.apiStatus) {
+        updateApiStatus(data.apiStatus.apiKeySet);
+    } else {
+        checkApiStatus();
+    }
 }
 
 // Update system metrics display
@@ -241,18 +396,34 @@ function renderFileTree(tree, depth) {
     return html;
 }
 
-// Update work queue display
+// Update work queue display - store all tasks
 function updateWorkQueueUI(queue) {
+    allTasks = queue || [];
+    filterAndRenderWorkQueue();
+}
+
+// Filter tasks by current tab and render
+function filterAndRenderWorkQueue() {
     const workQueueDiv = document.getElementById('work-queue');
     
-    if (!queue || queue.length === 0) {
+    if (!allTasks || allTasks.length === 0) {
         workQueueDiv.innerHTML = '<div class="loading">No tasks</div>';
         return;
     }
     
+    // Filter tasks by current tab
+    const filteredTasks = allTasks.filter(item => item.status === currentTab);
+    
+    if (filteredTasks.length === 0) {
+        workQueueDiv.innerHTML = `<div class="loading">No ${currentTab.toLowerCase()} tasks</div>`;
+        return;
+    }
+    
     let html = '';
-    queue.forEach(item => {
+    filteredTasks.forEach(item => {
         const isManualTask = item.createdAt; // Manual tasks have createdAt
+        const statusClass = item.status.toLowerCase();
+        
         html += `
             <div class="work-item" ${isManualTask ? `data-task-id="${item.id}"` : ''}>
                 <div class="work-title">${escapeHtml(item.title)}</div>
@@ -263,7 +434,7 @@ function updateWorkQueueUI(queue) {
                     </div>
                 ` : ''}
                 <div class="work-status">
-                    <span class="status-badge ${item.status.toLowerCase().replace('_', '-')}">${item.status}</span>
+                    <span class="status-badge ${statusClass}">${item.status}</span>
                     <span>${item.eta}</span>
                     ${isManualTask ? `<button class="delete-task-btn" onclick="deleteTask(${item.id})">×</button>` : ''}
                 </div>
