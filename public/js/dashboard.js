@@ -334,15 +334,16 @@ function updateAgentName(projectInfo) {
     }
 }
 
-// Update live logs display
+// Update live logs display - newest at top, waterfall down
 function updateLiveLogsDisplay(logs) {
     if (!logs) return;
     
     const logDiv = document.getElementById('live-logs');
     if (!logDiv) return;
     
+    // Reverse to show newest first (waterfall effect)
     let html = '';
-    logs.forEach(log => {
+    [...logs].reverse().forEach(log => {
         html += `
             <div class="log-entry ${log.level}">
                 <span class="log-timestamp">${new Date(log.timestamp).toLocaleTimeString()}</span>
@@ -351,7 +352,11 @@ function updateLiveLogsDisplay(logs) {
         `;
     });
     
-    logDiv.innerHTML = html || '<div class="loading">No logs available</div>';
+    // Prepend new logs instead of replacing (waterfall effect)
+    const newContent = html || '<div class="loading">No logs available</div>';
+    if (logDiv.innerHTML !== newContent) {
+        logDiv.innerHTML = newContent;
+    }
 }
 
 // Update gateway connection status in header
