@@ -377,6 +377,24 @@ function renderFileTree(tree, depth) {
 function updateWorkQueueUI(queue) {
     allTasks = queue || [];
     filterAndRenderWorkQueue();
+    updateQueueStatus();
+}
+
+// Update queue status indicator (thinking vs resting)
+function updateQueueStatus() {
+    const statusEl = document.getElementById('queue-status');
+    if (!statusEl) return;
+    
+    // Check if there are any active/in-progress tasks
+    const hasActiveTasks = allTasks.some(task => 
+        task.status === 'ACTIVE' || task.status === 'IN_PROGRESS'
+    );
+    
+    if (hasActiveTasks) {
+        statusEl.textContent = 'Atlas thinking...';
+    } else {
+        statusEl.textContent = 'Atlas resting';
+    }
 }
 
 // Filter tasks by current tab and render with smooth updates
