@@ -127,6 +127,10 @@ let tokenMetrics = {
     lastUpdated: new Date()
 };
 
+// Rate limit tracking
+let rateLimitHitCount = 0;
+let rateLimitBackoffMs = 0;
+
 // Token costs (per million tokens)
 const tokenCosts = {
     'haiku': { input: 0.80, output: 4.00 },
@@ -253,7 +257,13 @@ function fetchTodaysUsage() {
                 }
                 
                 if (stdout.includes('error') || stdout.includes('message')) {
-                    console.log('⚠️  DEBUG: Error response from today\'s usage:', stdout.substring(0, 200));
+                    if (stdout.includes('rate_limit_error')) {
+                        console.log('⚠️  Rate limit hit on today\'s usage API');
+                        rateLimitHitCount++;
+                        rateLimitBackoffMs = Math.min(5 * 60 * 1000, 60 * 1000 * rateLimitHitCount); // Max 5 minutes
+                    } else {
+                        console.log('⚠️  Error response from today\'s usage:', stdout.substring(0, 200));
+                    }
                     resolve(null);
                     return;
                 }
@@ -351,7 +361,13 @@ function fetchAllTimeUsage(nextPage = null) {
                 }
                 
                 if (stdout.includes('error') || stdout.includes('message')) {
-                    console.log('⚠️  DEBUG: Error response from all-time:', stdout.substring(0, 300));
+                    if (stdout.includes('rate_limit_error')) {
+                        console.log('⚠️  Rate limit hit on all-time usage API');
+                        rateLimitHitCount++;
+                        rateLimitBackoffMs = Math.min(5 * 60 * 1000, 60 * 1000 * rateLimitHitCount); // Max 5 minutes
+                    } else {
+                        console.log('⚠️  Error response from all-time:', stdout.substring(0, 300));
+                    }
                     resolve(null);
                     return;
                 }
@@ -712,6 +728,13 @@ function getDefaultWorkQueue() {
 
 // Get token usage from Anthropic API
 async function updateTokenMetrics() {
+  // Skip update if we're in backoff period due to rate limiting
+  if (rateLimitBackoffMs > 0) {
+    console.log(`⏸️  Rate limit backoff active - waiting ${Math.ceil(rateLimitBackoffMs / 1000)}s before next API call`);
+    rateLimitBackoffMs -= 5000; // Decrease by one interval
+    return;
+  }
+  
   console.log('🔄 Updating token metrics from Anthropic API...');
   
   const todaysData = await fetchTodaysUsage();
@@ -727,6 +750,13 @@ async function updateTokenMetrics() {
   if (allTimeData) {
     tokenMetrics.allTime.total.tokens = allTimeData.totalTokens;
     tokenMetrics.allTime.total.cost = allTimeData.cost;
+  }
+  
+  // Reset rate limit counter on successful API calls
+  if (todaysData && allTimeData) {
+    rateLimitHitCount = 0;
+    rateLimitBackoffMs = 0;
+    console.log('✅ Rate limit counter reset - API calls successful');
   }
   
   if (todaysData || allTimeData) {
@@ -779,7 +809,9 @@ setInterval(updateFileTree, 60000);          // Every 60 seconds
 setInterval(checkOpenClawStatus, 10000);     // Every 10 seconds
 setInterval(updateWorkQueue, 5000);          // Every 5 seconds (ACTIVE UPDATES)
 setInterval(updateLiveLogs, 3000);           // Every 3 seconds (LIVE LOGS)
-setInterval(updateTokenMetrics, 10000);      // Every 10 seconds (TOKEN USAGE)
+// Token metrics update interval
+// Anthropic Admin API has rate limits, so we update every 5 minutes instead of 10 seconds
+setInterval(updateTokenMetrics, 5 * 60 * 1000);      // Every 5 minutes (TOKEN USAGE - rate limit friendly)
 
 // Initial updates
 console.log('📊 Running initial updates...');
