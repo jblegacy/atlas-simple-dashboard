@@ -13,6 +13,50 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
+// Config file for persistent API settings
+const CONFIG_DIR = path.join(__dirname, 'config');
+const CONFIG_FILE = path.join(CONFIG_DIR, 'anthropic.json');
+
+// Ensure config directory exists
+if (!fs.existsSync(CONFIG_DIR)) {
+    fs.mkdirSync(CONFIG_DIR, { recursive: true });
+}
+
+// Load config from file
+function loadConfig() {
+    try {
+        if (fs.existsSync(CONFIG_FILE)) {
+            const config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+            console.log('✅ Loaded Anthropic config from file');
+            return config;
+        }
+    } catch (error) {
+        console.log('⚠️  Error loading config file:', error.message);
+    }
+    return null;
+}
+
+// Save config to file
+function saveConfig(config) {
+    try {
+        fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+        console.log('✅ Saved Anthropic config to file');
+    } catch (error) {
+        console.log('⚠️  Error saving config file:', error.message);
+    }
+}
+
+// Load config on startup
+const savedConfig = loadConfig();
+if (savedConfig && savedConfig.apiKey) {
+    process.env.ANTHROPIC_API_KEY = savedConfig.apiKey;
+    console.log('✅ Loaded API key from saved config');
+}
+if (savedConfig && savedConfig.endpoint) {
+    process.env.ANTHROPIC_API_ENDPOINT = savedConfig.endpoint;
+    console.log('✅ Loaded custom endpoint from saved config');
+}
+
 app.use(cors());
 app.use(express.static('public'));
 app.use(express.json());
@@ -666,14 +710,26 @@ app.post('/api/backup/metrics', (req, res) => {
 app.post('/api/anthropic/configure', (req, res) => {
   const { apiKey, endpoint } = req.body;
   
+  // Prepare config to save
+  const configToSave = {};
+  
   if (apiKey) {
     process.env.ANTHROPIC_API_KEY = apiKey;
+    configToSave.apiKey = apiKey;
     console.log('✅ Anthropic API key updated');
   }
   
   if (endpoint) {
     process.env.ANTHROPIC_API_ENDPOINT = endpoint;
+    configToSave.endpoint = endpoint;
     console.log('✅ Anthropic API endpoint updated to:', endpoint);
+  }
+  
+  // Save to persistent config file
+  if (Object.keys(configToSave).length > 0) {
+    const currentConfig = loadConfig() || {};
+    const updatedConfig = { ...currentConfig, ...configToSave };
+    saveConfig(updatedConfig);
   }
   
   const isConfigured = process.env.ANTHROPIC_API_KEY && 
@@ -685,14 +741,14 @@ app.post('/api/anthropic/configure', (req, res) => {
     type: 'apiStatus', 
     data: { 
       apiKeySet: isConfigured,
-      endpoint: process.env.ANTHROPIC_API_ENDPOINT || 'https://api.anthropic.com/v1/usage'
+      endpoint: process.env.ANTHROPIC_API_ENDPOINT || 'https://api.anthropic.com/v1/organizations/usage_report/messages'
     } 
   });
   
   res.json({ 
     success: true, 
     config: {
-      endpoint: process.env.ANTHROPIC_API_ENDPOINT || 'https://api.anthropic.com/v1/usage',
+      endpoint: process.env.ANTHROPIC_API_ENDPOINT || 'https://api.anthropic.com/v1/organizations/usage_report/messages',
       apiKeySet: isConfigured
     }
   });

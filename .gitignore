@@ -17,3 +17,6 @@ build/
 temp/
 logs/
 *.log
+config/
+# Config files contain API keys - NEVER commit these!
+config/anthropic.json
