@@ -154,7 +154,7 @@ function fetchTodaysUsage() {
 }
 
 // Get all-time usage (daily buckets with pagination)
-function fetchAllTimeUsage() {
+function fetchAllTimeUsage(nextPage = null) {
     return new Promise((resolve) => {
         const apiKey = process.env.ANTHROPIC_API_KEY;
         
@@ -178,7 +178,12 @@ function fetchAllTimeUsage() {
             url.searchParams.append('bucket_width', '1d'); // daily buckets
             url.searchParams.append('limit', '31'); // max 31 days per request
             
-            console.log('📊 Fetching all-time usage (daily buckets)...');
+            // Add pagination if provided
+            if (nextPage) {
+                url.searchParams.append('page', nextPage);
+            }
+            
+            console.log(`📊 Fetching all-time usage${nextPage ? ' (page: ' + nextPage + ')' : ''}...`);
             
             const curlCmd = `curl -s -X GET "${url.toString()}" \
               -H "anthropic-version: 2023-06-01" \
@@ -193,21 +198,38 @@ function fetchAllTimeUsage() {
                 
                 try {
                     const usageData = JSON.parse(stdout);
-                    const totalTokens = extractTokensFromResponse(usageData);
-                    const cost = calculateCost(totalTokens);
+                    let totalTokens = extractTokensFromResponse(usageData);
                     
-                    // TODO: Handle pagination if has_more is true
-                    if (usageData.has_more) {
-                        console.log('⚠️  All-time usage has pagination - need to fetch next page');
+                    // Handle pagination recursively
+                    if (usageData.has_more && usageData.next_page) {
+                        console.log('📄 Paginating all-time usage...');
+                        // Recursively fetch next page and accumulate
+                        fetchAllTimeUsage(usageData.next_page).then((nextPageData) => {
+                            if (nextPageData) {
+                                totalTokens += nextPageData.totalTokens;
+                            }
+                            const cost = calculateCost(totalTokens);
+                            
+                            console.log('✅ All-time usage (complete):', {
+                                tokens: totalTokens,
+                                cost: cost.toFixed(2),
+                                buckets: usageData.data?.length || 0
+                            });
+                            
+                            resolve({ totalTokens, cost });
+                        });
+                    } else {
+                        const cost = calculateCost(totalTokens);
+                        
+                        console.log('✅ All-time usage:', {
+                            tokens: totalTokens,
+                            cost: cost.toFixed(2),
+                            buckets: usageData.data?.length || 0,
+                            hasMore: usageData.has_more
+                        });
+                        
+                        resolve({ totalTokens, cost });
                     }
-                    
-                    console.log('✅ All-time usage:', {
-                        tokens: totalTokens,
-                        cost: cost.toFixed(2),
-                        buckets: usageData.data?.length || 0
-                    });
-                    
-                    resolve({ totalTokens, cost });
                 } catch (parseError) {
                     console.log('⚠️  Error parsing all-time usage:', parseError.message);
                     resolve(null);
