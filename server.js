@@ -22,6 +22,19 @@ let gitLogs = [];
 let fileTree = {};
 let workQueue = [];
 let openclawStatus = 'checking...';
+let currentModel = {
+    name: 'Haiku',
+    version: 'claude-3-haiku-20240307',
+    badge: 'haiku',
+    costSavings: '80%'
+};
+let backupMetrics = {
+    size: '275MB',
+    files: 15338,
+    folders: 2294,
+    lastBackup: new Date(),
+    growth: '+8MB, +1,038 files, +237 folders'
+};
 
 // WebSocket connections
 const clients = new Set();
@@ -38,7 +51,9 @@ wss.on('connection', (ws) => {
       gitLogs,
       fileTree,
       workQueue,
-      openclawStatus
+      openclawStatus,
+      currentModel,
+      backupMetrics
     }
   }));
 
@@ -223,12 +238,64 @@ watcher.on('change', () => {
   setTimeout(updateFileTree, 1000); // Debounce
 });
 
+// Update current model
+app.post('/api/model/switch', (req, res) => {
+  const { model } = req.body;
+  
+  const modelConfig = {
+    'haiku': {
+      name: 'Haiku',
+      version: 'claude-3-haiku-20240307',
+      badge: 'haiku',
+      costSavings: '80%'
+    },
+    'sonnet': {
+      name: 'Sonnet',
+      version: 'claude-sonnet-4-20250514',
+      badge: 'sonnet',
+      costSavings: '0%'
+    },
+    'opus': {
+      name: 'Opus',
+      version: 'claude-opus-4-6',
+      badge: 'opus',
+      costSavings: '-50%'
+    }
+  };
+  
+  if (modelConfig[model]) {
+    currentModel = modelConfig[model];
+    broadcast({ type: 'modelUpdate', data: currentModel });
+    res.json({ success: true, model: currentModel });
+  } else {
+    res.status(400).json({ error: 'Invalid model' });
+  }
+});
+
+// Update backup metrics
+app.post('/api/backup/metrics', (req, res) => {
+  const { size, files, folders, growth } = req.body;
+  
+  backupMetrics = {
+    size: size || backupMetrics.size,
+    files: files || backupMetrics.files,
+    folders: folders || backupMetrics.folders,
+    lastBackup: new Date(),
+    growth: growth || backupMetrics.growth
+  };
+  
+  broadcast({ type: 'backupMetrics', data: backupMetrics });
+  res.json({ success: true, metrics: backupMetrics });
+});
+
 // API Routes
 app.get('/api/status', (req, res) => {
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
-    connected_clients: clients.size
+    connected_clients: clients.size,
+    currentModel,
+    backupMetrics
   });
 });
 

@@ -72,6 +72,50 @@ body {
     border-left: 3px solid var(--status-active);
 }
 
+.stat-card.model-indicator {
+    border-left: 3px solid var(--accent-blue);
+}
+
+.stat-card.backup-indicator {
+    border-left: 3px solid var(--accent-orange);
+}
+
+.model-badge {
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    background-color: var(--bg-tertiary);
+    display: inline-block;
+    margin-top: 2px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.model-badge.haiku {
+    background-color: rgba(78, 201, 176, 0.1);
+    color: var(--accent-green);
+    border: 1px solid var(--accent-green);
+}
+
+.model-badge.sonnet {
+    background-color: rgba(206, 145, 120, 0.1);
+    color: var(--accent-orange);
+    border: 1px solid var(--accent-orange);
+}
+
+.model-badge.opus {
+    background-color: rgba(220, 220, 170, 0.1);
+    color: var(--accent-yellow);
+    border: 1px solid var(--accent-yellow);
+}
+
+.backup-time {
+    font-size: 10px;
+    color: var(--accent-orange);
+    margin-top: 2px;
+}
+
 .stat-value {
     font-size: 18px;
     font-weight: 700;

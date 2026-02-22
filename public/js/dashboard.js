@@ -67,6 +67,12 @@ function handleMessage(data) {
         case 'openclawStatus':
             updateOpenClawStatus(data.data);
             break;
+        case 'modelUpdate':
+            updateModelDisplay(data.data);
+            break;
+        case 'backupMetrics':
+            updateBackupMetrics(data.data);
+            break;
     }
 }
 
@@ -77,6 +83,8 @@ function updateAllData(data) {
     updateFileTreeUI(data.fileTree);
     updateWorkQueueUI(data.workQueue);
     updateOpenClawStatus(data.openclawStatus);
+    updateModelDisplay(data.currentModel);
+    updateBackupMetrics(data.backupMetrics);
 }
 
 // Update system metrics display
@@ -203,6 +211,55 @@ function updateOpenClawStatus(status) {
     
     if (label) {
         label.textContent = `OpenClaw ${status}\n74 processes + 4k TUI 3.4k CPU`;
+    }
+}
+
+// Update model display
+function updateModelDisplay(model) {
+    if (!model) return;
+    
+    const modelValue = document.getElementById('model-value');
+    const modelLabel = document.querySelector('.stat-card.model-indicator .stat-label');
+    const modelBadge = document.getElementById('model-badge');
+    
+    if (modelValue) {
+        modelValue.textContent = model.name;
+    }
+    
+    if (modelLabel) {
+        modelLabel.textContent = `Current Model\n${model.version}`;
+    }
+    
+    if (modelBadge) {
+        modelBadge.className = `model-badge ${model.badge}`;
+        modelBadge.textContent = `${model.badge} (${model.costSavings})`;
+    }
+}
+
+// Update backup metrics
+function updateBackupMetrics(metrics) {
+    if (!metrics) return;
+    
+    const backupSize = document.getElementById('backup-size');
+    const backupTime = document.getElementById('backup-time');
+    
+    if (backupSize) {
+        backupSize.textContent = metrics.size;
+    }
+    
+    if (backupTime) {
+        const lastBackup = new Date(metrics.lastBackup);
+        const now = new Date();
+        const diffSeconds = Math.floor((now - lastBackup) / 1000);
+        
+        let timeStr = 'Just now';
+        if (diffSeconds > 60) {
+            timeStr = Math.floor(diffSeconds / 60) + 'm ago';
+        } else if (diffSeconds > 3600) {
+            timeStr = Math.floor(diffSeconds / 3600) + 'h ago';
+        }
+        
+        backupTime.textContent = timeStr;
     }
 }
 
