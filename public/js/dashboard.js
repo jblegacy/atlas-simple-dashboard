@@ -80,11 +80,12 @@ function handleMessage(data) {
 function updateAllData(data) {
     updateSystemMetrics(data.systemMetrics);
     updateGitLogs(data.gitLogs);
-    updateFileTreeUI(data.fileTree);
+    updateFileTreeUI(data.fileTree, data.projectInfo);
     updateWorkQueueUI(data.workQueue);
     updateOpenClawStatus(data.openclawStatus);
     updateModelDisplay(data.currentModel);
     updateBackupMetrics(data.backupMetrics);
+    updateProjectInfo(data.projectInfo);
 }
 
 // Update system metrics display
@@ -141,7 +142,7 @@ function updateGitLogs(logs) {
 }
 
 // Update file tree display
-function updateFileTreeUI(tree) {
+function updateFileTreeUI(tree, projectInfo) {
     const fileTreeDiv = document.getElementById('file-tree');
     
     if (!tree || Object.keys(tree).length === 0) {
@@ -151,6 +152,11 @@ function updateFileTreeUI(tree) {
     
     const html = renderFileTree(tree, 0);
     fileTreeDiv.innerHTML = html;
+    
+    // Update the file tree path header
+    if (projectInfo) {
+        updateProjectInfo(projectInfo);
+    }
 }
 
 // Render file tree recursively
@@ -272,6 +278,16 @@ function updateConnectionStatus(connected) {
     } else {
         statusEl.classList.add('disconnected');
         statusEl.innerHTML = '<div class="status-dot"></div><span>Disconnected</span>';
+    }
+}
+
+// Update project info
+function updateProjectInfo(projectInfo) {
+    if (!projectInfo) return;
+    
+    const projectPath = document.getElementById('file-tree-path');
+    if (projectPath) {
+        projectPath.textContent = `(~/${projectInfo.name})`;
     }
 }
 

@@ -35,6 +35,10 @@ let backupMetrics = {
     lastBackup: new Date(),
     growth: '+8MB, +1,038 files, +237 folders'
 };
+let projectInfo = {
+    name: path.basename(process.cwd()),
+    path: process.cwd()
+};
 
 // WebSocket connections
 const clients = new Set();
@@ -53,7 +57,8 @@ wss.on('connection', (ws) => {
       workQueue,
       openclawStatus,
       currentModel,
-      backupMetrics
+      backupMetrics,
+      projectInfo
     }
   }));
 
@@ -295,7 +300,8 @@ app.get('/api/status', (req, res) => {
     timestamp: new Date().toISOString(),
     connected_clients: clients.size,
     currentModel,
-    backupMetrics
+    backupMetrics,
+    projectInfo
   });
 });
 
