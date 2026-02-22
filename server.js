@@ -13,9 +13,10 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
-// Config file for persistent API settings
+// Config file for persistent API settings & tasks
 const CONFIG_DIR = path.join(__dirname, 'config');
 const CONFIG_FILE = path.join(CONFIG_DIR, 'anthropic.json');
+const TASKS_FILE = path.join(CONFIG_DIR, 'tasks.json');
 
 // Ensure config directory exists
 if (!fs.existsSync(CONFIG_DIR)) {
@@ -46,6 +47,29 @@ function saveConfig(config) {
     }
 }
 
+// Load tasks from file
+function loadTasks() {
+    try {
+        if (fs.existsSync(TASKS_FILE)) {
+            const tasks = JSON.parse(fs.readFileSync(TASKS_FILE, 'utf8'));
+            console.log(`✅ Loaded ${tasks.length} tasks from file`);
+            return tasks;
+        }
+    } catch (error) {
+        console.log('⚠️  Error loading tasks file:', error.message);
+    }
+    return [];
+}
+
+// Save tasks to file
+function saveTasks(tasks) {
+    try {
+        fs.writeFileSync(TASKS_FILE, JSON.stringify(tasks, null, 2));
+    } catch (error) {
+        console.log('⚠️  Error saving tasks file:', error.message);
+    }
+}
+
 // Load config on startup
 const savedConfig = loadConfig();
 if (savedConfig && savedConfig.apiKey) {
@@ -56,6 +80,9 @@ if (savedConfig && savedConfig.endpoint) {
     process.env.ANTHROPIC_API_ENDPOINT = savedConfig.endpoint;
     console.log('✅ Loaded custom endpoint from saved config');
 }
+
+// Load tasks on startup
+manualTasks = loadTasks();
 
 app.use(cors());
 app.use(express.static('public'));
@@ -907,7 +934,8 @@ app.post('/api/tasks/add', (req, res) => {
   manualTasks.unshift(newTask);
   console.log('✅ Task added:', title);
   
-  // Update and broadcast
+  // Save to disk and broadcast
+  saveTasks(manualTasks);
   updateWorkQueue();
   
   res.json({ success: true, task: newTask });
@@ -929,7 +957,8 @@ app.post('/api/tasks/update/:id', (req, res) => {
   
   console.log('✅ Task updated:', id);
   
-  // Update and broadcast
+  // Save to disk and broadcast
+  saveTasks(manualTasks);
   updateWorkQueue();
   
   res.json({ success: true, task });
@@ -946,7 +975,8 @@ app.post('/api/tasks/delete/:id', (req, res) => {
   const removed = manualTasks.splice(index, 1);
   console.log('✅ Task deleted:', id);
   
-  // Update and broadcast
+  // Save to disk and broadcast
+  saveTasks(manualTasks);
   updateWorkQueue();
   
   res.json({ success: true, removed: removed[0] });
