@@ -48,8 +48,10 @@ function connectWebSocket() {
 
 // Handle WebSocket messages
 function handleMessage(data) {
+    console.log('📥 Received message type:', data.type);
     switch(data.type) {
         case 'initial':
+            console.log('📋 Initial data received:', data.data);
             updateAllData(data.data);
             break;
         case 'systemMetrics':
@@ -295,14 +297,24 @@ function updateProjectInfo(projectInfo) {
 
 // Update agent name in header
 function updateAgentName(projectInfo) {
-    if (!projectInfo) return;
+    console.log('🤖 updateAgentName called with:', projectInfo);
+    
+    if (!projectInfo) {
+        console.warn('⚠️  projectInfo is undefined');
+        return;
+    }
     
     const agentName = projectInfo.agentName || projectInfo.name || 'Unknown';
+    console.log('✅ Agent name resolved to:', agentName);
+    
     const agentBadge = document.getElementById('agent-name');
     const pageTitle = document.getElementById('page-title');
     
     if (agentBadge) {
         agentBadge.textContent = agentName;
+        console.log('✅ Agent badge updated');
+    } else {
+        console.warn('⚠️  Could not find agent-name element');
     }
     
     if (pageTitle) {

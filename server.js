@@ -45,22 +45,30 @@ let projectInfo = {
 function getAgentName() {
     // Try environment variable first
     if (process.env.OPENCLAW_AGENT) {
+        console.log('✅ Agent name from ENV:', process.env.OPENCLAW_AGENT);
         return process.env.OPENCLAW_AGENT;
     }
     
     // Try to read from OpenClaw config
     try {
         const configPath = path.join(process.env.HOME || '/Users/openclaw', '.openclaw/openclaw.json');
+        
+        if (!fs.existsSync(configPath)) {
+            console.log('⚠️  Config not found at:', configPath);
+            return path.basename(process.cwd());
+        }
+        
         const configFile = fs.readFileSync(configPath, 'utf8');
         const config = JSON.parse(configFile);
         
         // Get current agent from bindings or use workspace name
         const workspaceName = path.basename(process.cwd());
         const agentFromConfig = config.agents?.list?.find(a => 
-            a.workspace?.includes(workspaceName)
+            a.workspace?.includes(workspaceName) || a.id === workspaceName
         );
         
         if (agentFromConfig?.name) {
+            console.log('✅ Agent name from config:', agentFromConfig.name);
             return agentFromConfig.name;
         }
         
@@ -71,14 +79,17 @@ function getAgentName() {
         );
         
         if (matchedAgent?.name) {
+            console.log('✅ Agent name from agentDir match:', matchedAgent.name);
             return matchedAgent.name;
         }
     } catch (error) {
-        console.log('Could not read OpenClaw config:', error.message);
+        console.log('⚠️  Could not read OpenClaw config:', error.message);
     }
     
     // Fallback: use workspace/project name
-    return path.basename(process.cwd());
+    const fallback = path.basename(process.cwd());
+    console.log('ℹ️  Using fallback agent name:', fallback);
+    return fallback;
 }
 
 // WebSocket connections
@@ -86,7 +97,12 @@ const clients = new Set();
 
 wss.on('connection', (ws) => {
   clients.add(ws);
-  console.log('Client connected');
+  console.log('✅ Client connected. Total clients:', clients.size);
+  console.log('📤 Sending initial data:');
+  console.log('  - projectInfo:', projectInfo);
+  console.log('  - fileTree items:', Object.keys(fileTree).length);
+  console.log('  - gitLogs:', gitLogs.length);
+  console.log('  - systemMetrics:', !!systemMetrics.cpu);
   
   // Send initial data
   ws.send(JSON.stringify({
@@ -189,6 +205,7 @@ function getCommitType(message) {
 // Get file tree
 function updateFileTree() {
   const basePath = process.cwd();
+  console.log('🌳 Building file tree for:', basePath);
   
   function buildTree(dirPath, depth = 0) {
     if (depth > 3) return null; // Limit depth
@@ -212,11 +229,13 @@ function updateFileTree() {
       
       return tree;
     } catch (error) {
+      console.error('Error building tree:', error.message);
       return null;
     }
   }
   
   fileTree = buildTree(basePath);
+  console.log('✅ File tree built with', Object.keys(fileTree).length, 'items');
   broadcast({ type: 'fileTree', data: fileTree });
 }
 
@@ -314,11 +333,16 @@ setInterval(checkOpenClawStatus, 10000);     // Every 10 seconds
 setInterval(updateWorkQueue, 15000);         // Every 15 seconds (OpenClaw tasks)
 
 // Initial updates
+console.log('📊 Running initial updates...');
 updateSystemMetrics();
 updateGitLogs();
 updateFileTree();
 checkOpenClawStatus();
 updateWorkQueue();
+
+console.log('🎯 Server startup complete');
+console.log('Project Info:', projectInfo);
+console.log('Initial fileTree items:', Object.keys(fileTree).length);
 
 // Watch for file changes
 const watcher = chokidar.watch('.', {
