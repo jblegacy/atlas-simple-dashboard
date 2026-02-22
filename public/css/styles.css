@@ -78,6 +78,36 @@ body {
     letter-spacing: 0.5px;
 }
 
+.connection-status-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    background-color: var(--bg-tertiary);
+    border: 1px solid var(--status-active);
+    border-radius: 4px;
+    font-size: 11px;
+    color: var(--status-active);
+}
+
+.connection-status-header.disconnected {
+    border-color: var(--accent-red);
+    color: var(--accent-red);
+}
+
+.connection-status-header .status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background-color: var(--status-active);
+    animation: pulse 1s infinite;
+}
+
+.connection-status-header.disconnected .status-dot {
+    background-color: var(--accent-red);
+    animation: none;
+}
+
 .container {
     width: 100%;
     flex: 1;

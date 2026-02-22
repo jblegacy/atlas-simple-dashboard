@@ -115,7 +115,9 @@ wss.on('connection', (ws) => {
       openclawStatus,
       currentModel,
       backupMetrics,
-      projectInfo
+      projectInfo,
+      liveLogs,
+      gatewayStatus: 'connected'
     }
   }));
 
@@ -325,12 +327,43 @@ function getDefaultWorkQueue() {
   ];
 }
 
+// Get live logs from OpenClaw gateway
+let liveLogs = [];
+function updateLiveLogs() {
+  exec('tail -30 /Users/openclaw/.openclaw/logs/gateway.log 2>/dev/null || tail -30 /tmp/openclaw/openclaw-*.log 2>/dev/null || echo ""', 
+    (error, stdout, stderr) => {
+      if (stdout && stdout.trim()) {
+        liveLogs = stdout.split('\n')
+          .filter(line => line.trim())
+          .map((line, index) => {
+            // Parse log line for level
+            let level = 'info';
+            if (line.includes('ERROR') || line.includes('error')) level = 'error';
+            else if (line.includes('WARN') || line.includes('warn')) level = 'warning';
+            else if (line.includes('DEBUG') || line.includes('debug')) level = 'debug';
+            
+            return {
+              level,
+              message: line,
+              timestamp: new Date().toISOString()
+            };
+          })
+          .reverse() // Show newest first
+          .slice(0, 20); // Keep last 20 entries
+        
+        console.log('📋 Live logs updated:', liveLogs.length, 'entries');
+        broadcast({ type: 'liveLogs', data: liveLogs });
+      }
+    });
+}
+
 // Update all data periodically
 setInterval(updateSystemMetrics, 1000);      // Every 1 second (REAL-TIME)
 setInterval(updateGitLogs, 30000);           // Every 30 seconds
 setInterval(updateFileTree, 60000);          // Every 60 seconds
 setInterval(checkOpenClawStatus, 10000);     // Every 10 seconds
-setInterval(updateWorkQueue, 15000);         // Every 15 seconds (OpenClaw tasks)
+setInterval(updateWorkQueue, 5000);          // Every 5 seconds (ACTIVE UPDATES)
+setInterval(updateLiveLogs, 3000);           // Every 3 seconds (LIVE LOGS)
 
 // Initial updates
 console.log('📊 Running initial updates...');

@@ -75,6 +75,12 @@ function handleMessage(data) {
         case 'backupMetrics':
             updateBackupMetrics(data.data);
             break;
+        case 'liveLogs':
+            updateLiveLogsDisplay(data.data);
+            break;
+        case 'gatewayStatus':
+            updateGatewayStatus(data.data);
+            break;
     }
 }
 
@@ -89,6 +95,8 @@ function updateAllData(data) {
     updateBackupMetrics(data.backupMetrics);
     updateProjectInfo(data.projectInfo);
     updateAgentName(data.projectInfo);
+    updateLiveLogsDisplay(data.liveLogs);
+    updateGatewayStatus(data.gatewayStatus);
 }
 
 // Update system metrics display
@@ -319,6 +327,40 @@ function updateAgentName(projectInfo) {
     
     if (pageTitle) {
         pageTitle.textContent = `${agentName} - System Stats & OpenClaw Monitor`;
+    }
+}
+
+// Update live logs display
+function updateLiveLogsDisplay(logs) {
+    if (!logs) return;
+    
+    const logDiv = document.getElementById('live-logs');
+    if (!logDiv) return;
+    
+    let html = '';
+    logs.forEach(log => {
+        html += `
+            <div class="log-entry ${log.level}">
+                <span class="log-timestamp">${new Date(log.timestamp).toLocaleTimeString()}</span>
+                ${escapeHtml(log.message)}
+            </div>
+        `;
+    });
+    
+    logDiv.innerHTML = html || '<div class="loading">No logs available</div>';
+}
+
+// Update gateway connection status in header
+function updateGatewayStatus(status) {
+    const statusEl = document.getElementById('connection-status');
+    if (!statusEl) return;
+    
+    if (status === 'connected') {
+        statusEl.classList.remove('disconnected');
+        statusEl.innerHTML = '<div class="status-dot"></div><span>Gateway Active</span>';
+    } else {
+        statusEl.classList.add('disconnected');
+        statusEl.innerHTML = '<div class="status-dot"></div><span>Gateway Offline</span>';
     }
 }
 
