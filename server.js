@@ -127,22 +127,21 @@ async function updateSystemMetrics() {
     const uptime = await si.time();
     
     systemMetrics = {
-      cpu: Math.round(cpu.currentLoad),
+      cpu: (cpu.currentLoad).toFixed(2),
       memory: {
-        used: Math.round(memory.used / 1024 / 1024 / 1024 * 10) / 10,
+        used: (memory.used / 1024 / 1024 / 1024).toFixed(2),
         total: Math.round(memory.total / 1024 / 1024 / 1024),
-        percentage: Math.round(memory.used / memory.total * 100)
+        percentage: (memory.used / memory.total * 100).toFixed(2)
       },
       disk: {
-        used: disk[0] ? Math.round(disk[0].used / 1024 / 1024 / 1024) : 0,
+        used: disk[0] ? (disk[0].used / 1024 / 1024 / 1024).toFixed(2) : 0,
         total: disk[0] ? Math.round(disk[0].size / 1024 / 1024 / 1024) : 0,
-        percentage: disk[0] ? Math.round(disk[0].use) : 0
+        percentage: disk[0] ? (disk[0].use).toFixed(2) : 0
       },
       uptime: {
         days: Math.floor(uptime.uptime / 86400),
         hours: Math.floor((uptime.uptime % 86400) / 3600),
-        minutes: Math.floor((uptime.uptime % 3600) / 60),
-        seconds: Math.floor(uptime.uptime % 60)
+        minutes: Math.floor((uptime.uptime % 3600) / 60)
       },
       timestamp: new Date().toISOString()
     };

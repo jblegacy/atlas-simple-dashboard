@@ -93,29 +93,30 @@ function updateAllData(data) {
 function updateSystemMetrics(metrics) {
     if (!metrics) return;
     
-    // CPU
-    const cpuValue = `${metrics.cpu || 0} (${Math.round(metrics.cpu / 4)}%)`;
+    // CPU (2 decimal places)
+    const cpuValue = `${parseFloat(metrics.cpu).toFixed(2)}% (${(parseFloat(metrics.cpu) / 4).toFixed(2)}%)`;
     document.getElementById('cpu-value').textContent = cpuValue;
     
-    // Memory
+    // Memory (2 decimal places)
     if (metrics.memory) {
-        const memValue = `${metrics.memory.used}GB (${metrics.memory.percentage}%)`;
+        const memValue = `${parseFloat(metrics.memory.used).toFixed(2)}GB (${parseFloat(metrics.memory.percentage).toFixed(2)}%)`;
         document.getElementById('memory-value').textContent = memValue;
         const memCard = document.querySelector('.stat-card.memory');
         if (memCard) {
-            memCard.style.borderLeftColor = metrics.memory.percentage > 80 ? '#ff6b6b' : '#dcdcaa';
+            const memPercent = parseFloat(metrics.memory.percentage);
+            memCard.style.borderLeftColor = memPercent > 80 ? '#ff6b6b' : '#dcdcaa';
         }
     }
     
-    // Disk
+    // Disk (2 decimal places)
     if (metrics.disk) {
-        const diskValue = `${metrics.disk.used}GB (${metrics.disk.percentage}%)`;
+        const diskValue = `${parseFloat(metrics.disk.used).toFixed(2)}GB (${parseFloat(metrics.disk.percentage).toFixed(2)}%)`;
         document.getElementById('disk-value').textContent = diskValue;
     }
     
-    // Uptime (with seconds)
+    // Uptime
     if (metrics.uptime) {
-        const uptimeValue = `${metrics.uptime.days}d ${metrics.uptime.hours}h${metrics.uptime.minutes}m${metrics.uptime.seconds}s`;
+        const uptimeValue = `${metrics.uptime.days}d ${metrics.uptime.hours}h${metrics.uptime.minutes}m`;
         document.getElementById('uptime-value').textContent = uptimeValue;
     }
 }
