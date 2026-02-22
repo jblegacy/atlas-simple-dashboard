@@ -81,9 +81,6 @@ if (savedConfig && savedConfig.endpoint) {
     console.log('✅ Loaded custom endpoint from saved config');
 }
 
-// Load tasks on startup
-manualTasks = loadTasks();
-
 app.use(cors());
 app.use(express.static('public'));
 app.use(express.json());
@@ -94,6 +91,9 @@ let gitLogs = [];
 let fileTree = {};
 let workQueue = [];
 let manualTasks = []; // User-created tasks
+
+// Load tasks on startup (after declaration)
+manualTasks = loadTasks();
 let openclawStatus = 'checking...';
 let currentModel = {
     name: 'Haiku',
