@@ -276,25 +276,10 @@ function updateWorkQueue() {
       });
     }
     
-    // Fetch active OpenClaw gateway process specifically
-    exec('ps aux | grep -E "openclaw.*gateway|node.*openclaw" | grep -v grep | wc -l 2>/dev/null || echo "0"', (error, stdout, stderr) => {
-      const gatewayProcessCount = parseInt(stdout) || 0;
-      
-      if (gatewayProcessCount > 0) {
-        tasks.unshift({
-          id: 0,
-          title: "OpenClaw Gateway",
-          description: `OpenClaw gateway running. Monitoring system metrics, managing agents, and processing tasks in real-time.`,
-          status: "IN_PROGRESS",
-          progress: 100,
-          eta: "Ongoing"
-        });
-      }
-      
+      // Only show actual cron jobs, not infrastructure
       workQueue = tasks.length > 0 ? tasks : getDefaultWorkQueue();
-      console.log('📋 Work queue updated:', tasks.length, 'tasks');
+      console.log('📋 Work queue updated:', tasks.length, 'cron jobs');
       broadcast({ type: 'workQueue', data: workQueue });
-    });
   });
 }
 
@@ -303,27 +288,11 @@ function getDefaultWorkQueue() {
   return [
     {
       id: 1,
-      title: "OpenClaw System Monitor",
-      description: "Monitoring system metrics, gateway status, and agent activity. Real-time dashboard tracking all portfolio operations.",
-      status: "IN_PROGRESS",
-      progress: 100,
-      eta: "Ongoing"
-    },
-    {
-      id: 2,
-      title: "Portfolio Hourly Backup",
-      description: "Automated backup system running hourly. Capturing 275MB+ of workspace data, configurations, and agent states.",
-      status: "SCHEDULED",
-      progress: 100,
-      eta: "Every hour"
-    },
-    {
-      id: 3,
-      title: "Atlas Strategic Intelligence",
-      description: "Portfolio optimization, cross-agent intelligence, and strategic decision support. Processing real-time metrics.",
-      status: "ACTIVE",
-      progress: 100,
-      eta: "Continuous"
+      title: "No Active Cron Jobs",
+      description: "No scheduled tasks currently configured. Work queue shows actual scheduled tasks and background operations.",
+      status: "IDLE",
+      progress: 0,
+      eta: "Waiting"
     }
   ];
 }
