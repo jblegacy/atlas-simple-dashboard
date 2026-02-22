@@ -81,6 +81,9 @@ function handleMessage(data) {
         case 'gatewayStatus':
             updateGatewayStatus(data.data);
             break;
+        case 'tokenMetrics':
+            updateTokenMetricsDisplay(data.data);
+            break;
     }
 }
 
@@ -97,6 +100,7 @@ function updateAllData(data) {
     updateAgentName(data.projectInfo);
     updateLiveLogsDisplay(data.liveLogs);
     updateGatewayStatus(data.gatewayStatus);
+    updateTokenMetricsDisplay(data.tokenMetrics);
 }
 
 // Update system metrics display
@@ -362,6 +366,26 @@ function updateGatewayStatus(status) {
         statusEl.classList.add('disconnected');
         statusEl.innerHTML = '<div class="status-dot"></div><span>Gateway Offline</span>';
     }
+}
+
+// Update token metrics display
+function updateTokenMetricsDisplay(metrics) {
+    if (!metrics) return;
+    
+    // Update token usage display
+    const tokenValue = document.getElementById('token-value');
+    if (tokenValue) {
+        const haiku = metrics.haiku.total || 0;
+        const sonnet = metrics.sonnet.total || 0;
+        tokenValue.textContent = `${haiku}/${sonnet}`;
+    }
+    
+    // You could also update costs if you add a cost display element
+    console.log('💰 Token Metrics:', {
+        haiku: `${metrics.haiku.total} tokens ($${(metrics.haiku.cost || 0).toFixed(2)})`,
+        sonnet: `${metrics.sonnet.total} tokens ($${(metrics.sonnet.cost || 0).toFixed(2)})`,
+        total: `${metrics.total.tokens} tokens ($${(metrics.total.cost || 0).toFixed(2)})`
+    });
 }
 
 // Utility: Escape HTML

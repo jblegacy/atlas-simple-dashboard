@@ -35,6 +35,33 @@ let backupMetrics = {
     lastBackup: new Date(),
     growth: '+8MB, +1,038 files, +237 folders'
 };
+
+let tokenMetrics = {
+    haiku: {
+        input: 0,
+        output: 0,
+        total: 0,
+        cost: 0
+    },
+    sonnet: {
+        input: 0,
+        output: 0,
+        total: 0,
+        cost: 0
+    },
+    total: {
+        tokens: 0,
+        cost: 0,
+        lastUpdated: new Date()
+    }
+};
+
+// Token costs (per million tokens)
+const tokenCosts = {
+    'haiku': { input: 0.80, output: 4.00 },
+    'sonnet': { input: 3.00, output: 15.00 },
+    'opus': { input: 15.00, output: 75.00 }
+};
 let projectInfo = {
     name: path.basename(process.cwd()),
     path: process.cwd(),
@@ -117,6 +144,7 @@ wss.on('connection', (ws) => {
       backupMetrics,
       projectInfo,
       liveLogs,
+      tokenMetrics,
       gatewayStatus: 'connected'
     }
   }));
@@ -297,6 +325,56 @@ function getDefaultWorkQueue() {
   ];
 }
 
+// Get token usage from OpenClaw gateway logs
+function updateTokenMetrics() {
+  // Read gateway logs for token usage patterns
+  exec('grep -i "tokens" /Users/openclaw/.openclaw/logs/gateway.log 2>/dev/null | tail -100 || echo ""', 
+    (error, stdout, stderr) => {
+      if (stdout && stdout.trim()) {
+        const lines = stdout.split('\n');
+        
+        // Parse token usage from logs (example pattern: "tokens: 1500 input, 300 output")
+        lines.forEach(line => {
+          // Look for token patterns in logs
+          const haikusMatch = line.match(/haiku.*?(\d+)\s+input.*?(\d+)\s+output/i);
+          const sonnetMatch = line.match(/sonnet.*?(\d+)\s+input.*?(\d+)\s+output/i);
+          
+          if (haikusMatch) {
+            tokenMetrics.haiku.input += parseInt(haikusMatch[1]) || 0;
+            tokenMetrics.haiku.output += parseInt(haikusMatch[2]) || 0;
+          }
+          if (sonnetMatch) {
+            tokenMetrics.sonnet.input += parseInt(sonnetMatch[1]) || 0;
+            tokenMetrics.sonnet.output += parseInt(sonnetMatch[2]) || 0;
+          }
+        });
+        
+        // Calculate costs
+        tokenMetrics.haiku.total = tokenMetrics.haiku.input + tokenMetrics.haiku.output;
+        tokenMetrics.haiku.cost = 
+          (tokenMetrics.haiku.input * tokenCosts.haiku.input / 1000000) +
+          (tokenMetrics.haiku.output * tokenCosts.haiku.output / 1000000);
+        
+        tokenMetrics.sonnet.total = tokenMetrics.sonnet.input + tokenMetrics.sonnet.output;
+        tokenMetrics.sonnet.cost = 
+          (tokenMetrics.sonnet.input * tokenCosts.sonnet.input / 1000000) +
+          (tokenMetrics.sonnet.output * tokenCosts.sonnet.output / 1000000);
+        
+        tokenMetrics.total.tokens = tokenMetrics.haiku.total + tokenMetrics.sonnet.total;
+        tokenMetrics.total.cost = tokenMetrics.haiku.cost + tokenMetrics.sonnet.cost;
+        tokenMetrics.total.lastUpdated = new Date();
+        
+        console.log('💰 Token metrics updated:', {
+          haiku: `${tokenMetrics.haiku.total} tokens ($${tokenMetrics.haiku.cost.toFixed(2)})`,
+          sonnet: `${tokenMetrics.sonnet.total} tokens ($${tokenMetrics.sonnet.cost.toFixed(2)})`,
+          total: `${tokenMetrics.total.tokens} tokens ($${tokenMetrics.total.cost.toFixed(2)})`
+        });
+        
+        broadcast({ type: 'tokenMetrics', data: tokenMetrics });
+      }
+    });
+}
+
 // Get live logs from OpenClaw gateway
 let liveLogs = [];
 function updateLiveLogs() {
@@ -334,6 +412,7 @@ setInterval(updateFileTree, 60000);          // Every 60 seconds
 setInterval(checkOpenClawStatus, 10000);     // Every 10 seconds
 setInterval(updateWorkQueue, 5000);          // Every 5 seconds (ACTIVE UPDATES)
 setInterval(updateLiveLogs, 3000);           // Every 3 seconds (LIVE LOGS)
+setInterval(updateTokenMetrics, 10000);      // Every 10 seconds (TOKEN USAGE)
 
 // Initial updates
 console.log('📊 Running initial updates...');
@@ -342,6 +421,7 @@ updateGitLogs();
 updateFileTree();
 checkOpenClawStatus();
 updateWorkQueue();
+updateTokenMetrics();
 
 console.log('🎯 Server startup complete');
 console.log('Project Info:', projectInfo);
