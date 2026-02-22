@@ -37,8 +37,49 @@ let backupMetrics = {
 };
 let projectInfo = {
     name: path.basename(process.cwd()),
-    path: process.cwd()
+    path: process.cwd(),
+    agentName: getAgentName()
 };
+
+// Get OpenClaw agent/bot name
+function getAgentName() {
+    // Try environment variable first
+    if (process.env.OPENCLAW_AGENT) {
+        return process.env.OPENCLAW_AGENT;
+    }
+    
+    // Try to read from OpenClaw config
+    try {
+        const configPath = path.join(process.env.HOME || '/Users/openclaw', '.openclaw/openclaw.json');
+        const configFile = fs.readFileSync(configPath, 'utf8');
+        const config = JSON.parse(configFile);
+        
+        // Get current agent from bindings or use workspace name
+        const workspaceName = path.basename(process.cwd());
+        const agentFromConfig = config.agents?.list?.find(a => 
+            a.workspace?.includes(workspaceName)
+        );
+        
+        if (agentFromConfig?.name) {
+            return agentFromConfig.name;
+        }
+        
+        // Try to match by agentDir
+        const currentDir = process.cwd();
+        const matchedAgent = config.agents?.list?.find(a =>
+            currentDir.includes(a.id || a.name)
+        );
+        
+        if (matchedAgent?.name) {
+            return matchedAgent.name;
+        }
+    } catch (error) {
+        console.log('Could not read OpenClaw config:', error.message);
+    }
+    
+    // Fallback: use workspace/project name
+    return path.basename(process.cwd());
+}
 
 // WebSocket connections
 const clients = new Set();

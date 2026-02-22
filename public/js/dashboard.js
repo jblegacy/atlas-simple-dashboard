@@ -86,6 +86,7 @@ function updateAllData(data) {
     updateModelDisplay(data.currentModel);
     updateBackupMetrics(data.backupMetrics);
     updateProjectInfo(data.projectInfo);
+    updateAgentName(data.projectInfo);
 }
 
 // Update system metrics display
@@ -288,6 +289,23 @@ function updateProjectInfo(projectInfo) {
     const projectPath = document.getElementById('file-tree-path');
     if (projectPath) {
         projectPath.textContent = `(~/${projectInfo.name})`;
+    }
+}
+
+// Update agent name in header
+function updateAgentName(projectInfo) {
+    if (!projectInfo) return;
+    
+    const agentName = projectInfo.agentName || projectInfo.name || 'Unknown';
+    const agentBadge = document.getElementById('agent-name');
+    const pageTitle = document.getElementById('page-title');
+    
+    if (agentBadge) {
+        agentBadge.textContent = agentName;
+    }
+    
+    if (pageTitle) {
+        pageTitle.textContent = `${agentName} - System Stats & OpenClaw Monitor`;
     }
 }
 
