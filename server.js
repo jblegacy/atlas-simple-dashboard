@@ -232,22 +232,8 @@ const tokenCosts = {
     'opus': { input: 15.00, output: 75.00 }
 };
 
-// Calculate cost from tokens (blended average of models)
-function calculateCost(tokens) {
-    // Blended average: (Haiku + Sonnet) / 2 ≈ $0.0018 per token
-    // More precisely: ~20% input, 80% output
-    const inputRate = (0.80 + 3.00) / 2 / 1000000; // ~$0.0000019 per input token
-    const outputRate = (4.00 + 15.00) / 2 / 1000000; // ~$0.0000095 per output token
-    // Assume 20% input, 80% output ratio
-    const estimatedCost = (tokens * 0.2 * inputRate) + (tokens * 0.8 * outputRate);
-    
-    // Debug: log if tokens are 0
-    if (tokens === 0) {
-        console.log('⚠️  DEBUG: calculateCost called with 0 tokens');
-    }
-    
-    return estimatedCost;
-}
+// Note: Cost API returns actual USD amounts directly, no calculation needed
+// Usage API returns tokens only - we use Cost API for accurate pricing
 
 // Extract and breakdown tokens/cost by day from API response
 function extractDailyBreakdown(usageData) {
@@ -399,8 +385,8 @@ function fetchTodaysUsage() {
     });
 }
 
-// Get all-time usage (daily buckets through yesterday - complete data only)
-function fetchAllTimeUsage(nextPage = null) {
+// Get all-time costs from Cost API (actual USD amounts, not estimated from tokens)
+function fetchAllTimeCosts(nextPage = null) {
     return new Promise((resolve) => {
         const apiKey = process.env.ANTHROPIC_API_KEY;
         
@@ -913,10 +899,10 @@ async function updateTokenMetrics() {
     return;
   }
   
-  console.log('🔄 Updating token metrics from Anthropic API...');
+  console.log('🔄 Updating cost metrics from Anthropic APIs...');
   
   const todaysData = await fetchTodaysUsage();
-  const allTimeData = await fetchAllTimeUsage();
+  const allTimeCosts = await fetchAllTimeCosts();
   
   if (todaysData) {
     tokenMetrics.today = {
@@ -925,25 +911,24 @@ async function updateTokenMetrics() {
     };
   }
   
-  if (allTimeData) {
-    tokenMetrics.allTime.total.tokens = allTimeData.totalTokens;
-    tokenMetrics.allTime.total.cost = allTimeData.cost;
+  if (allTimeCosts) {
+    tokenMetrics.allTime.total.cost = allTimeCosts.totalCost;
   }
   
   // Reset rate limit counter on successful API calls
-  if (todaysData && allTimeData) {
+  if (todaysData && allTimeCosts) {
     rateLimitHitCount = 0;
     rateLimitBackoffMs = 0;
     console.log('✅ Rate limit counter reset - API calls successful');
   }
   
-  if (todaysData || allTimeData) {
-    console.log('💰 Real token usage (Anthropic Admin API):', {
+  if (todaysData || allTimeCosts) {
+    console.log('💰 Real costs from Anthropic APIs:', {
       today: todaysData ? `$${todaysData.cost.toFixed(4)}` : 'N/A',
-      allTime: allTimeData ? `$${allTimeData.cost.toFixed(2)}` : 'N/A'
+      allTime: allTimeCosts ? `$${allTimeCosts.totalCost.toFixed(2)}` : 'N/A'
     });
   } else {
-    console.log('💰 Token metrics updated (Anthropic API unavailable)');
+    console.log('💰 Cost metrics updated (Anthropic APIs unavailable)');
   }
   
   tokenMetrics.lastUpdated = new Date();
