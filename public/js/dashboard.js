@@ -583,19 +583,19 @@ function updateTokenMetricsDisplay(metrics) {
         todayCost.textContent = `$${cost.toFixed(4)}`;
     }
     
-    // Calculate total: yesterday (all-time) + today (live)
+    // All-Time: yesterday (cumulative through yesterday) + today (live)
     const alltimeCost = document.getElementById('alltime-cost');
     if (alltimeCost && metrics.allTime && metrics.today) {
         const yesterdayTotal = metrics.allTime.total?.cost || 0;
         const todayTotal = metrics.today.cost || 0;
-        const grandTotal = yesterdayTotal + todayTotal;
-        alltimeCost.textContent = `Total: $${grandTotal.toFixed(2)} (2026 YTD)`;
+        const allTimeTotal = yesterdayTotal + todayTotal;
+        alltimeCost.textContent = `All-Time: $${allTimeTotal.toFixed(2)}`;
     }
     
     console.log('💰 Token Metrics:', {
         today_live: metrics.today ? `$${metrics.today.cost.toFixed(4)}` : 'N/A',
         yesterday_cumulative: `$${(metrics.allTime.total?.cost || 0).toFixed(2)}`,
-        ytd_total: `$${((metrics.allTime.total?.cost || 0) + (metrics.today?.cost || 0)).toFixed(2)}`
+        all_time_total: `$${((metrics.allTime.total?.cost || 0) + (metrics.today?.cost || 0)).toFixed(2)}`
     });
 }
 
