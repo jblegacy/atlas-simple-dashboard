@@ -198,6 +198,7 @@ function fetchTodaysUsage() {
 }
 
 // Get all-time usage (daily buckets with pagination)
+// accountStartDate can be customized via env var ACCOUNT_START_DATE
 function fetchAllTimeUsage(nextPage = null) {
     return new Promise((resolve) => {
         const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -208,9 +209,10 @@ function fetchAllTimeUsage(nextPage = null) {
         }
         
         try {
-            // Account creation estimate: 2024-01-01 to today
+            // Account creation date - customize via env var or default to 2024-01-01
+            const accountStartStr = process.env.ACCOUNT_START_DATE || '2024-01-01T00:00:00Z';
             const now = new Date();
-            const startOfAccount = new Date('2024-01-01T00:00:00Z');
+            const startOfAccount = new Date(accountStartStr);
             
             const startingAt = startOfAccount.toISOString();
             const endingAt = now.toISOString();
@@ -228,6 +230,7 @@ function fetchAllTimeUsage(nextPage = null) {
             }
             
             console.log(`📊 Fetching all-time usage${nextPage ? ' (page: ' + nextPage + ')' : ''}...`);
+            console.log(`   Date range: ${startOfAccount.toISOString()} to ${now.toISOString()}`);
             
             const curlCmd = `curl -s -X GET "${url.toString()}" \
               -H "anthropic-version: 2023-06-01" \
@@ -242,11 +245,32 @@ function fetchAllTimeUsage(nextPage = null) {
                 
                 try {
                     const usageData = JSON.parse(stdout);
+                    
+                    // Debug: show raw response structure
+                    console.log(`   API returned ${usageData.data?.length || 0} buckets`);
+                    if (usageData.data && usageData.data.length > 0) {
+                        const firstBucket = usageData.data[0];
+                        const lastBucket = usageData.data[usageData.data.length - 1];
+                        console.log(`   First bucket: ${firstBucket.starting_at} (${firstBucket.results?.length || 0} results)`);
+                        console.log(`   Last bucket: ${lastBucket.starting_at} (${lastBucket.results?.length || 0} results)`);
+                        
+                        // Show sample of tokens if available
+                        const sampleResult = firstBucket.results?.[0];
+                        if (sampleResult) {
+                            console.log(`   Sample result:`, {
+                                uncached_input: sampleResult.uncached_input_tokens,
+                                cache_read: sampleResult.cache_read_input_tokens,
+                                output: sampleResult.output_tokens
+                            });
+                        }
+                    }
+                    
                     let totalTokens = extractTokensFromResponse(usageData);
+                    console.log(`   Extracted tokens: ${totalTokens}`);
                     
                     // Handle pagination recursively
                     if (usageData.has_more && usageData.next_page) {
-                        console.log('📄 Paginating all-time usage...');
+                        console.log(`📄 Paginating all-time usage (next_page: ${usageData.next_page})...`);
                         // Recursively fetch next page and accumulate
                         fetchAllTimeUsage(usageData.next_page).then((nextPageData) => {
                             if (nextPageData) {
@@ -276,6 +300,7 @@ function fetchAllTimeUsage(nextPage = null) {
                     }
                 } catch (parseError) {
                     console.log('⚠️  Error parsing all-time usage:', parseError.message);
+                    console.log('   Raw response:', stdout.substring(0, 500));
                     resolve(null);
                 }
             });
