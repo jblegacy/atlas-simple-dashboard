@@ -562,19 +562,23 @@ const tokenCosts = {
 // Usage API returns tokens only - we calculate cost using token pricing
 // Cost API could return actual USD, but we use token-based calculation for today's usage
 
+// Resolve model name to pricing tier ('haiku', 'sonnet', 'opus')
+function resolveModelTier(modelName) {
+    if (modelName) {
+        const name = modelName.toLowerCase();
+        if (name.includes('opus')) return 'opus';
+        if (name.includes('sonnet')) return 'sonnet';
+        if (name.includes('haiku')) return 'haiku';
+    }
+    if (currentModel && currentModel.badge) return currentModel.badge;
+    return 'haiku';
+}
+
 // Calculate cost from separate input and output token counts
 // Uses per-model pricing when model is known, defaults to current model pricing
 function calculateCost(inputTokens, outputTokens, modelName) {
     // Resolve which pricing tier to use
-    let tier = 'haiku'; // default fallback
-    if (modelName) {
-        const name = modelName.toLowerCase();
-        if (name.includes('opus')) tier = 'opus';
-        else if (name.includes('sonnet')) tier = 'sonnet';
-        else if (name.includes('haiku')) tier = 'haiku';
-    } else if (currentModel && currentModel.badge) {
-        tier = currentModel.badge; // use currently detected model
-    }
+    const tier = resolveModelTier(modelName);
 
     const pricing = tokenCosts[tier] || tokenCosts['haiku'];
     const inputCost = (inputTokens / 1_000_000) * pricing.input;
@@ -588,7 +592,8 @@ function extractDailyBreakdown(usageData, groupByAgent = false) {
     const dailyBreakdown = [];
     let totalTokens = 0;
     let totalCost = 0;
-    const perAgent = {}; // apiKeyId -> { tokens, cost, dailyCosts: { date -> cost } }
+    const perAgent = {}; // apiKeyId -> { tokens, cost, dailyCosts, modelTokens }
+    const perModel = {}; // modelTier -> totalTokens (global model breakdown)
 
     console.log(`   🔍 DEBUG: usageData.data exists? ${!!usageData.data}, length: ${usageData.data?.length || 0}`);
 
@@ -608,9 +613,13 @@ function extractDailyBreakdown(usageData, groupByAgent = false) {
                     const outputTokens = (result.output_tokens || 0);
                     const dayTokens = inputTokens + outputTokens;
                     const dayCost = calculateCost(inputTokens, outputTokens, result.model);
+                    const modelTier = resolveModelTier(result.model);
 
                     totalTokens += dayTokens;
                     totalCost += dayCost;
+
+                    // Global per-model token accumulation
+                    perModel[modelTier] = (perModel[modelTier] || 0) + dayTokens;
 
                     console.log(`   🔍 DEBUG: Bucket ${idx} (${bucket.starting_at}): ${dayTokens} tokens (in:${inputTokens} out:${outputTokens}) = $${dayCost.toFixed(4)}${result.model ? ' [' + result.model + ']' : ''}${result.api_key_id ? ' key:' + result.api_key_id.slice(-8) : ''}`);
 
@@ -618,10 +627,11 @@ function extractDailyBreakdown(usageData, groupByAgent = false) {
                     if (groupByAgent && result.api_key_id) {
                         const keyId = result.api_key_id;
                         if (!perAgent[keyId]) {
-                            perAgent[keyId] = { tokens: 0, cost: 0, dailyCosts: {} };
+                            perAgent[keyId] = { tokens: 0, cost: 0, dailyCosts: {}, modelTokens: {} };
                         }
                         perAgent[keyId].tokens += dayTokens;
                         perAgent[keyId].cost += dayCost;
+                        perAgent[keyId].modelTokens[modelTier] = (perAgent[keyId].modelTokens[modelTier] || 0) + dayTokens;
 
                         const date = bucket.starting_at.split('T')[0];
                         perAgent[keyId].dailyCosts[date] =
@@ -649,9 +659,12 @@ function extractDailyBreakdown(usageData, groupByAgent = false) {
         if (groupByAgent && Object.keys(perAgent).length > 0) {
             console.log(`   🔍 DEBUG: Per-agent keys found: ${Object.keys(perAgent).length}`);
         }
+        if (Object.keys(perModel).length > 0) {
+            console.log(`   🔍 DEBUG: Per-model tokens: ${Object.entries(perModel).map(([m, t]) => `${m}:${t}`).join(', ')}`);
+        }
     }
 
-    return { dailyBreakdown, totalTokens, totalCost, perAgent };
+    return { dailyBreakdown, totalTokens, totalCost, perAgent, perModel };
 }
 
 // Extract total tokens from API response (legacy function)
@@ -738,7 +751,7 @@ function fetchTodaysUsage(groupByAgent = false) {
                         dataLength: usageData.data?.length
                     });
 
-                    const { dailyBreakdown, totalTokens, totalCost: cost, perAgent } = extractDailyBreakdown(usageData, groupByAgent);
+                    const { dailyBreakdown, totalTokens, totalCost: cost, perAgent, perModel } = extractDailyBreakdown(usageData, groupByAgent);
 
                     if (dailyBreakdown.length > 0) {
                         console.log('✅ Today\'s usage (minute buckets):', {
@@ -751,7 +764,7 @@ function fetchTodaysUsage(groupByAgent = false) {
                         console.log('✅ Today\'s usage: 0 tokens, $0.00 (no usage yet)');
                     }
 
-                    resolve({ totalTokens, cost, perAgent });
+                    resolve({ totalTokens, cost, perAgent, perModel });
                 } catch (parseError) {
                     console.log('⚠️  Error parsing today\'s usage:', parseError.message);
                     resolve(null);
@@ -765,7 +778,7 @@ function fetchTodaysUsage(groupByAgent = false) {
 }
 
 // Get all-time costs (token-based calculation with per-model pricing)
-function fetchAllTimeCosts(nextPage = null, groupByAgent = false, accumulatedPerAgent = null) {
+function fetchAllTimeCosts(nextPage = null, groupByAgent = false, accumulatedPerAgent = null, accumulatedPerModel = null) {
     return new Promise((resolve) => {
         const apiKey = getEffectiveApiKey();
 
@@ -849,14 +862,14 @@ function fetchAllTimeCosts(nextPage = null, groupByAgent = false, accumulatedPer
                         dataLength: usageData.data?.length
                     });
 
-                    const { dailyBreakdown, totalTokens: pageTokens, totalCost: pageCost, perAgent: pagePerAgent } = extractDailyBreakdown(usageData, groupByAgent);
+                    const { dailyBreakdown, totalTokens: pageTokens, totalCost: pageCost, perAgent: pagePerAgent, perModel: pagePerModel } = extractDailyBreakdown(usageData, groupByAgent);
 
                     // Merge per-agent data across pages
                     const mergedPerAgent = accumulatedPerAgent || {};
                     if (groupByAgent) {
                         Object.entries(pagePerAgent).forEach(([keyId, data]) => {
                             if (!mergedPerAgent[keyId]) {
-                                mergedPerAgent[keyId] = { tokens: 0, cost: 0, dailyCosts: {} };
+                                mergedPerAgent[keyId] = { tokens: 0, cost: 0, dailyCosts: {}, modelTokens: {} };
                             }
                             mergedPerAgent[keyId].tokens += data.tokens;
                             mergedPerAgent[keyId].cost += data.cost;
@@ -864,8 +877,19 @@ function fetchAllTimeCosts(nextPage = null, groupByAgent = false, accumulatedPer
                                 mergedPerAgent[keyId].dailyCosts[date] =
                                     (mergedPerAgent[keyId].dailyCosts[date] || 0) + cost;
                             });
+                            // Merge modelTokens across pages
+                            Object.entries(data.modelTokens || {}).forEach(([model, tokens]) => {
+                                mergedPerAgent[keyId].modelTokens[model] =
+                                    (mergedPerAgent[keyId].modelTokens[model] || 0) + tokens;
+                            });
                         });
                     }
+
+                    // Merge per-model data across pages
+                    const mergedPerModel = accumulatedPerModel || {};
+                    Object.entries(pagePerModel).forEach(([model, tokens]) => {
+                        mergedPerModel[model] = (mergedPerModel[model] || 0) + tokens;
+                    });
 
                     console.log(`   API returned ${usageData.data?.length || 0} buckets`);
 
@@ -890,7 +914,7 @@ function fetchAllTimeCosts(nextPage = null, groupByAgent = false, accumulatedPer
 
                     if (usageData.has_more && usageData.next_page) {
                         console.log(`📄 Paginating all-time usage (next_page: ${usageData.next_page})...`);
-                        fetchAllTimeCosts(usageData.next_page, groupByAgent, mergedPerAgent).then((nextPageData) => {
+                        fetchAllTimeCosts(usageData.next_page, groupByAgent, mergedPerAgent, mergedPerModel).then((nextPageData) => {
                             if (nextPageData) {
                                 const totalTokens = pageTokens + nextPageData.totalTokens;
                                 const cost = pageCost + nextPageData.cost;
@@ -901,7 +925,7 @@ function fetchAllTimeCosts(nextPage = null, groupByAgent = false, accumulatedPer
                                     pages: 'multiple'
                                 });
 
-                                resolve({ totalTokens, cost, perAgent: nextPageData.perAgent || mergedPerAgent });
+                                resolve({ totalTokens, cost, perAgent: nextPageData.perAgent || mergedPerAgent, perModel: nextPageData.perModel || mergedPerModel });
                             }
                         });
                     } else {
@@ -913,7 +937,7 @@ function fetchAllTimeCosts(nextPage = null, groupByAgent = false, accumulatedPer
                             agentKeys: groupByAgent ? Object.keys(mergedPerAgent).length : 'N/A'
                         });
 
-                        resolve({ totalTokens: pageTokens, cost: pageCost, perAgent: mergedPerAgent });
+                        resolve({ totalTokens: pageTokens, cost: pageCost, perAgent: mergedPerAgent, perModel: mergedPerModel });
                     }
                 } catch (parseError) {
                     console.log('⚠️  Error parsing all-time usage:', parseError.message);
@@ -1340,6 +1364,17 @@ async function updateTokenMetrics() {
         ? recentCosts.reduce((a, b) => a + b, 0) / daysCount
         : 0;
 
+      // Per-agent model breakdown: merge allTime + today modelTokens
+      const agentModelTokens = { ...(allTimeAgentData?.modelTokens || {}) };
+      Object.entries(todayAgentData?.modelTokens || {}).forEach(([m, t]) => {
+        agentModelTokens[m] = (agentModelTokens[m] || 0) + t;
+      });
+      const agentTotalTokens = Object.values(agentModelTokens).reduce((a, b) => a + b, 0);
+      const models = {};
+      Object.entries(agentModelTokens).forEach(([model, tokens]) => {
+        models[model] = agentTotalTokens > 0 ? Math.round((tokens / agentTotalTokens) * 100) : 0;
+      });
+
       const slug = agent.slug || agent.name.toLowerCase();
       agentBreakdown[slug] = {
         name: agent.name,
@@ -1347,14 +1382,32 @@ async function updateTokenMetrics() {
         today: todayAgentData?.cost || 0,
         allTime: (allTimeAgentData?.cost || 0) + (todayAgentData?.cost || 0),
         estimatedDaily: estimatedDaily,
-        todayTokens: todayAgentData?.tokens || 0
+        todayTokens: todayAgentData?.tokens || 0,
+        models: models
       };
     });
 
     tokenMetrics.perAgent = agentBreakdown;
     console.log('👥 Per-agent costs:', Object.entries(agentBreakdown).map(([slug, d]) =>
-      `${d.name}: today=$${d.today.toFixed(4)}, allTime=$${d.allTime.toFixed(2)}, est=$${d.estimatedDaily.toFixed(2)}/d`
+      `${d.name}: today=$${d.today.toFixed(4)}, allTime=$${d.allTime.toFixed(2)}, est=$${d.estimatedDaily.toFixed(2)}/d, models=${JSON.stringify(d.models)}`
     ).join(', '));
+  }
+
+  // Global model breakdown from API data (replaces legacy getModelUsagePercents when available)
+  const allTimePerModel = allTimeCosts?.perModel || {};
+  const todayPerModel = todaysData?.perModel || {};
+  const globalModelTokens = { ...allTimePerModel };
+  Object.entries(todayPerModel).forEach(([model, tokens]) => {
+    globalModelTokens[model] = (globalModelTokens[model] || 0) + tokens;
+  });
+  const globalTotalTokens = Object.values(globalModelTokens).reduce((a, b) => a + b, 0);
+  if (globalTotalTokens > 0) {
+    const modelBreakdown = {};
+    Object.entries(globalModelTokens).forEach(([model, tokens]) => {
+      modelBreakdown[model] = Math.round((tokens / globalTotalTokens) * 100);
+    });
+    tokenMetrics.modelBreakdown = modelBreakdown;
+    console.log('📊 Global model breakdown:', Object.entries(modelBreakdown).map(([m, p]) => `${m}:${p}%`).join(', '));
   }
 
   if (todaysData && allTimeCosts) {
