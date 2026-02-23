@@ -408,7 +408,6 @@ function updateAllData(data) {
     }
     
     updateModelDisplay(data.currentModel);
-    updateBackupMetrics(data.backupMetrics);
     updateProjectInfo(data.projectInfo);
     updateAgentName(data.projectInfo);
     updateLiveLogsDisplay(data.liveLogs);
@@ -655,53 +654,84 @@ function updateOpenClawStatus(stats) {
     }
 }
 
-// Update model display
+// Update model display (badge + name in combined card)
 function updateModelDisplay(model) {
     if (!model) return;
-    
+
     const modelValue = document.getElementById('model-value');
-    const modelLabel = document.querySelector('.stat-card.model-indicator .stat-label');
     const modelBadge = document.getElementById('model-badge');
-    
+
     if (modelValue) {
         modelValue.textContent = model.name;
     }
-    
-    if (modelLabel) {
-        modelLabel.textContent = `Current Model\n${model.version}`;
-    }
-    
+
     if (modelBadge) {
         modelBadge.className = `model-badge ${model.badge}`;
         modelBadge.textContent = `${model.badge} (${model.costSavings})`;
     }
 }
 
-// Update backup metrics
-function updateBackupMetrics(metrics) {
+// Update combined model + agent display (overall breakdown + per-agent model %)
+function updateModelAgentDisplay(metrics) {
     if (!metrics) return;
-    
-    const backupSize = document.getElementById('backup-size');
-    const backupTime = document.getElementById('backup-time');
-    
-    if (backupSize) {
-        backupSize.textContent = metrics.size;
+
+    const breakdownEl = document.getElementById('model-breakdown');
+    const perAgentEl = document.getElementById('model-per-agent');
+
+    // Overall model breakdown from API data
+    if (breakdownEl && metrics.modelBreakdown) {
+        const breakdown = Object.entries(metrics.modelBreakdown)
+            .sort((a, b) => b[1] - a[1])
+            .map(([model, pct]) => {
+                const cap = model.charAt(0).toUpperCase() + model.slice(1);
+                return `<span class="model-pct-${model}">${cap}: ${pct}%</span>`;
+            })
+            .join(' | ');
+        breakdownEl.innerHTML = breakdown || 'No data yet';
+        window._modelBreakdownFromAPI = true;
     }
-    
-    if (backupTime) {
-        const lastBackup = new Date(metrics.lastBackup);
-        const now = new Date();
-        const diffSeconds = Math.floor((now - lastBackup) / 1000);
-        
-        let timeStr = 'Just now';
-        if (diffSeconds > 60) {
-            timeStr = Math.floor(diffSeconds / 60) + 'm ago';
-        } else if (diffSeconds > 3600) {
-            timeStr = Math.floor(diffSeconds / 3600) + 'h ago';
+
+    // Per-agent model rows
+    if (perAgentEl && metrics.perAgent) {
+        const agents = Object.entries(metrics.perAgent);
+        if (agents.length === 0) {
+            perAgentEl.innerHTML = '';
+            return;
         }
-        
-        backupTime.textContent = timeStr;
+
+        let html = '';
+        agents.forEach(([slug, data]) => {
+            if (!data.models || Object.keys(data.models).length === 0) return;
+
+            const dotColor = data.color || '#007acc';
+            const modelPcts = Object.entries(data.models)
+                .sort((a, b) => b[1] - a[1])
+                .map(([model, pct]) => {
+                    const cap = model.charAt(0).toUpperCase() + model.slice(1);
+                    return `<span class="model-pct-${model}">${cap} ${pct}%</span>`;
+                })
+                .join(' <span style="opacity:0.4">\u00b7</span> ');
+
+            html += `
+                <div class="model-agent-row">
+                    <span class="model-agent-name">
+                        <span class="agent-dot" style="background: ${dotColor};"></span>
+                        ${escapeHtml(data.name)}
+                    </span>
+                    <span class="model-agent-models">${modelPcts}</span>
+                </div>
+            `;
+        });
+
+        perAgentEl.innerHTML = html;
     }
+
+    console.log('📊 Model+Agent Display updated:', {
+        modelBreakdown: metrics.modelBreakdown,
+        agentModels: metrics.perAgent ? Object.entries(metrics.perAgent).map(([s, d]) =>
+            `${d.name}: ${JSON.stringify(d.models || {})}`
+        ) : 'N/A'
+    });
 }
 
 // Update connection status
@@ -820,6 +850,11 @@ function updateTokenMetricsDisplay(metrics) {
         updatePerAgentCostsDisplay(metrics.perAgent);
     }
 
+    // Combined model + agent breakdown display
+    if (metrics.modelBreakdown || metrics.perAgent) {
+        updateModelAgentDisplay(metrics);
+    }
+
     console.log('💰 Token Metrics:', {
         today_live: metrics.today ? `$${metrics.today.cost.toFixed(4)}` : 'N/A',
         yesterday_cumulative: `$${(metrics.allTime.total?.cost || 0).toFixed(2)}`,
@@ -828,34 +863,22 @@ function updateTokenMetricsDisplay(metrics) {
     });
 }
 
-// Display model usage percentages (all-time)
+// Display model usage percentages (all-time) - legacy fallback for when API modelBreakdown unavailable
 function updateModelUsageDisplay(modelUsage) {
-    const primaryEl = document.getElementById('model-usage-primary');
+    // Skip if API-based modelBreakdown has already been rendered
+    if (window._modelBreakdownFromAPI) return;
+
     const breakdownEl = document.getElementById('model-breakdown');
-    
-    if (!primaryEl || !breakdownEl) return;
-    
-    // Find dominant model
-    let dominantModel = 'Mixed';
-    let dominantPercent = 0;
-    
-    Object.entries(modelUsage).forEach(([model, percent]) => {
-        if (percent > dominantPercent) {
-            dominantPercent = percent;
-            dominantModel = model.charAt(0).toUpperCase() + model.slice(1);
-        }
-    });
-    
-    primaryEl.textContent = dominantModel;
-    
+    if (!breakdownEl) return;
+
     // Build breakdown string
     const breakdown = Object.entries(modelUsage)
         .map(([model, percent]) => `${model.charAt(0).toUpperCase() + model.slice(1)}: ${percent}%`)
         .join(' | ');
-    
+
     breakdownEl.textContent = breakdown || 'No data yet';
-    
-    console.log('📊 Model Usage %:', modelUsage);
+
+    console.log('📊 Model Usage % (legacy):', modelUsage);
 }
 
 // Display agent costs breakdown (all-time) - legacy from model history

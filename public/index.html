@@ -59,15 +59,16 @@
 
         <!-- Business Metrics Row (Bottom) -->
         <div class="stats-bar stats-bottom">
-            <div class="stat-card model-indicator">
-                <div class="stat-value" id="model-value">Haiku</div>
-                <div class="stat-label">Current Model<br>claude-3-haiku-20240307</div>
-                <div class="model-badge" id="model-badge">haiku</div>
-            </div>
-            <div class="stat-card model-usage">
-                <div class="stat-value" id="model-usage-primary">--</div>
-                <div class="stat-label">Model Usage<br>(All-Time)</div>
-                <div class="model-breakdown" id="model-breakdown">Sonnet: -% | Haiku: -% | Opus: -%</div>
+            <div class="stat-card model-agent-card">
+                <div class="model-current-row">
+                    <span class="model-badge" id="model-badge">haiku</span>
+                    <span class="model-current-name" id="model-value">Haiku</span>
+                </div>
+                <div class="stat-label">Model Usage (All-Time)</div>
+                <div class="model-overall-breakdown" id="model-breakdown">
+                    Sonnet: -% | Haiku: -% | Opus: -%
+                </div>
+                <div class="model-per-agent" id="model-per-agent"></div>
             </div>
             <div class="stat-card cost-by-bot">
                 <div class="stat-value" id="cost-by-bot-total">$0.00</div>
@@ -86,11 +87,6 @@
                 <div class="stat-value" id="today-cost">$0.00</div>
                 <div class="stat-label">Today's Live<br>Usage Cost</div>
                 <div class="token-cost" id="alltime-cost">All-Time: $0.00</div>
-            </div>
-            <div class="stat-card backup-indicator">
-                <div class="stat-value" id="backup-size">275MB</div>
-                <div class="stat-label">Backup Size<br>Last 72 hours</div>
-                <div class="backup-time" id="backup-time">Just now</div>
             </div>
         </div>
 

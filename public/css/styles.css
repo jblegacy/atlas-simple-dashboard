@@ -188,12 +188,9 @@ body {
     border-left: 3px solid var(--status-active);
 }
 
-.stat-card.model-indicator {
+.stat-card.model-agent-card {
     border-left: 3px solid var(--accent-blue);
-}
-
-.stat-card.backup-indicator {
-    border-left: 3px solid var(--accent-orange);
+    background: linear-gradient(135deg, var(--bg-tertiary) 0%, var(--bg-secondary) 100%);
 }
 
 .stat-card.token-session {
@@ -241,11 +238,69 @@ body {
     border: 1px solid var(--accent-yellow);
 }
 
-.backup-time {
-    font-size: 10px;
-    color: var(--accent-orange);
-    margin-top: 2px;
+/* Combined Model + Agent Card */
+.model-current-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
 }
+
+.model-current-row .model-badge {
+    margin-top: 0;
+}
+
+.model-current-name {
+    font-size: clamp(12px, 2vmin, 18px);
+    font-weight: 700;
+    color: var(--accent-yellow);
+}
+
+.model-overall-breakdown {
+    font-size: 10px;
+    color: var(--text-secondary);
+    margin: 4px 0;
+    font-family: 'JetBrains Mono', monospace;
+}
+
+.model-per-agent {
+    margin-top: 4px;
+    border-top: 1px solid var(--border-color);
+    padding-top: 4px;
+}
+
+.model-per-agent:empty {
+    display: none;
+}
+
+.model-agent-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 9px;
+    line-height: 1.8;
+}
+
+.model-agent-name {
+    font-weight: 600;
+    color: var(--text-primary);
+    min-width: 50px;
+    display: flex;
+    align-items: center;
+    gap: 3px;
+}
+
+.model-agent-models {
+    color: var(--text-secondary);
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+/* Model percentage colors */
+.model-pct-haiku { color: var(--accent-green); }
+.model-pct-sonnet { color: var(--accent-orange); }
+.model-pct-opus { color: var(--accent-yellow); }
 
 .stat-value {
     font-size: clamp(12px, 2vmin, 20px);
@@ -544,13 +599,11 @@ body {
     color: var(--accent-green);
 }
 
-/* Model Usage & Cost by Bot Scorecards */
-.stat-card.model-usage,
+/* Cost by Bot Scorecard */
 .stat-card.cost-by-bot {
     background: linear-gradient(135deg, var(--bg-tertiary) 0%, var(--bg-secondary) 100%);
 }
 
-.model-breakdown,
 .bot-breakdown {
     font-size: 10px;
     color: var(--text-secondary);
