@@ -71,11 +71,15 @@
             </div>
             <div class="stat-card cost-by-bot">
                 <div class="stat-value" id="cost-by-bot-total">$0.00</div>
-                <div class="stat-label">Cost by Bot<br>(All-Time)</div>
+                <div class="stat-label">Agent Costs<br>(Usage API)</div>
                 <div class="bot-breakdown" id="bot-breakdown">
-                    <div>🔵 Atlas: $0.00</div>
-                    <div>🔴 Nate: $0.00</div>
-                    <div>🟢 Alex: $0.00</div>
+                    <div class="agent-cost-header">
+                        <span></span>
+                        <span>today</span>
+                        <span>all-time</span>
+                        <span>est/day</span>
+                    </div>
+                    <div class="help-text" style="font-size:10px;">Configure agent keys via API settings</div>
                 </div>
             </div>
             <div class="stat-card token-alltime">
@@ -149,46 +153,85 @@
         </div>
     </div>
 
-    <!-- API Key Modal -->
+    <!-- API Key Management Modal -->
     <div class="modal" id="api-modal" style="display: none;">
-        <div class="modal-content">
+        <div class="modal-content modal-content-wide">
             <div class="modal-header">
-                <h2 id="modal-title">Configure Anthropic API</h2>
-                <button class="modal-close" id="modal-close">×</button>
+                <h2 id="modal-title">API Key Management</h2>
+                <button class="modal-close" id="modal-close">&times;</button>
             </div>
-            <div class="modal-body">
-                <p class="modal-description" id="modal-description">
-                    Add your Anthropic API key to enable real-time token usage monitoring and cost tracking in the dashboard.
+
+            <!-- Modal Tabs -->
+            <div class="modal-tabs">
+                <button class="modal-tab active" data-modal-tab="admin">Admin Key</button>
+                <button class="modal-tab" data-modal-tab="agents">Agent Keys</button>
+            </div>
+
+            <!-- Admin Key Tab -->
+            <div class="modal-body modal-tab-content active" id="tab-admin">
+                <p class="modal-description">
+                    The admin API key calls the Anthropic Usage Report API for org-level cost data.
+                    Must be an admin key (prefix: sk-ant-admin...).
                 </p>
                 <div class="form-group">
-                    <label for="api-key-input">API Key</label>
-                    <input 
-                        type="password" 
-                        id="api-key-input" 
-                        placeholder="sk-ant-..." 
-                        class="api-key-input"
-                    >
+                    <label for="admin-key-input">Admin API Key</label>
+                    <input type="password" id="admin-key-input"
+                           placeholder="sk-ant-admin01-..." class="api-key-input">
                     <p class="help-text">
-                        Your API key is stored securely on the backend and never exposed on the frontend.
+                        Stored securely on the backend. Used for Usage Report API only.
                     </p>
                 </div>
                 <div class="form-group">
                     <label for="api-endpoint-input">Custom Endpoint (Optional)</label>
-                    <input 
-                        type="text" 
-                        id="api-endpoint-input" 
-                        placeholder="https://api.anthropic.com/v1/usage" 
-                        class="api-endpoint-input"
-                    >
+                    <input type="text" id="api-endpoint-input"
+                           placeholder="https://api.anthropic.com/v1/organizations/usage_report/messages"
+                           class="api-endpoint-input">
                     <p class="help-text">
                         Leave blank to use Anthropic's default API endpoint.
                     </p>
                 </div>
+                <div class="admin-key-status" id="admin-key-status"></div>
             </div>
+
+            <!-- Agent Keys Tab -->
+            <div class="modal-body modal-tab-content" id="tab-agents">
+                <p class="modal-description">
+                    Add API key IDs for each agent to track per-agent costs.
+                    Find key IDs in the Anthropic Console under Settings &gt; API Keys.
+                </p>
+
+                <!-- Existing agent entries -->
+                <div id="agent-entries-list"></div>
+
+                <!-- Add new agent form -->
+                <div class="agent-add-form">
+                    <div class="form-row">
+                        <div class="form-group form-group-half">
+                            <label for="new-agent-name">Agent Name</label>
+                            <input type="text" id="new-agent-name"
+                                   placeholder="e.g., Atlas" class="api-key-input">
+                        </div>
+                        <div class="form-group form-group-half">
+                            <label for="new-agent-keyid">API Key ID</label>
+                            <input type="text" id="new-agent-keyid"
+                                   placeholder="apikey_01Rj..." class="api-key-input">
+                        </div>
+                    </div>
+                    <button class="btn-add-agent" id="btn-add-agent">+ Add Agent</button>
+                </div>
+
+                <!-- Lookup button -->
+                <div class="agent-lookup-section" id="agent-lookup-section" style="display: none;">
+                    <button class="btn-lookup" id="btn-lookup-keys">
+                        Lookup Org Keys (via Admin API)
+                    </button>
+                    <div id="org-keys-dropdown" style="display: none;"></div>
+                </div>
+            </div>
+
             <div class="modal-footer">
                 <button class="btn-cancel" id="btn-cancel">Cancel</button>
-                <button class="btn-save" id="btn-save-api">Add API Key</button>
-                <span id="api-mode-indicator" style="display:none; color: var(--text-secondary); font-size: 11px; position: absolute; right: 120px;"></span>
+                <button class="btn-save" id="btn-save-api">Save Configuration</button>
             </div>
         </div>
     </div>

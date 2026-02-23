@@ -29,116 +29,239 @@ function setupTabButtons() {
     });
 }
 
-// Setup API Modal
+// Setup API Modal (tabbed: Admin Key + Agent Keys)
 function setupApiModal() {
     const modal = document.getElementById('api-modal');
     const apiStatus = document.getElementById('api-status');
     const closeBtn = document.getElementById('modal-close');
     const cancelBtn = document.getElementById('btn-cancel');
     const saveBtn = document.getElementById('btn-save-api');
-    const apiKeyInput = document.getElementById('api-key-input');
-    const apiEndpointInput = document.getElementById('api-endpoint-input');
-    const modalTitle = document.getElementById('modal-title');
-    const modalDescription = document.getElementById('modal-description');
-    
-    let isEditMode = false;
-    
-    // Open modal - can click API status at any time
-    apiStatus?.addEventListener('click', () => {
-        const isActive = apiStatus.classList.contains('active');
-        isEditMode = isActive;
-        
-        // Update modal based on mode
-        if (isEditMode) {
-            modalTitle.textContent = 'Update Anthropic API Key';
-            modalDescription.textContent = 'Replace your existing API key with a new one.';
-            saveBtn.textContent = 'Update API Key';
-        } else {
-            modalTitle.textContent = 'Configure Anthropic API';
-            modalDescription.textContent = 'Add your Anthropic API key to enable real-time token usage monitoring and cost tracking in the dashboard.';
-            saveBtn.textContent = 'Add API Key';
-        }
-        
-        // Clear inputs
-        apiKeyInput.value = '';
-        apiEndpointInput.value = '';
-        
-        modal.style.display = 'flex';
-        apiKeyInput.focus();
+    const addAgentBtn = document.getElementById('btn-add-agent');
+    const lookupBtn = document.getElementById('btn-lookup-keys');
+
+    // Modal tab switching
+    document.querySelectorAll('.modal-tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+            document.querySelectorAll('.modal-tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.modal-tab-content').forEach(c => c.classList.remove('active'));
+            tab.classList.add('active');
+            document.getElementById(`tab-${tab.dataset.modalTab}`).classList.add('active');
+        });
     });
-    
+
+    // Open modal
+    apiStatus?.addEventListener('click', async () => {
+        modal.style.display = 'flex';
+        await loadAgentsConfigIntoModal();
+        document.getElementById('admin-key-input')?.focus();
+    });
+
     // Close modal
     const closeModal = () => {
         modal.style.display = 'none';
-        apiKeyInput.value = '';
-        apiEndpointInput.value = '';
-        isEditMode = false;
     };
-    
+
     closeBtn?.addEventListener('click', closeModal);
     cancelBtn?.addEventListener('click', closeModal);
-    
-    // Click outside modal to close
     modal?.addEventListener('click', (e) => {
-        if (e.target === modal) {
-            closeModal();
-        }
+        if (e.target === modal) closeModal();
     });
-    
-    // Save API key
+
+    // Save admin key + endpoint
     saveBtn?.addEventListener('click', async () => {
-        const apiKey = apiKeyInput.value.trim();
-        const endpoint = apiEndpointInput.value.trim();
-        
-        if (!apiKey) {
-            alert('Please enter an API key');
+        const adminKey = document.getElementById('admin-key-input').value.trim();
+        const endpoint = document.getElementById('api-endpoint-input').value.trim();
+
+        if (!adminKey) {
+            alert('Please enter an admin API key');
             return;
         }
-        
+
         try {
             saveBtn.disabled = true;
-            const originalText = saveBtn.textContent;
             saveBtn.textContent = 'Saving...';
-            
-            const response = await fetch('/api/anthropic/configure', {
+
+            // Save to agents config
+            await fetch('/api/agents/configure', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ adminApiKey: adminKey })
+            });
+
+            // Also save to legacy endpoint for backward compat
+            await fetch('/api/anthropic/configure', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    apiKey,
+                    apiKey: adminKey,
                     endpoint: endpoint || undefined
                 })
             });
-            
-            if (response.ok) {
-                console.log('✅ API key saved');
-                closeModal();
-                checkApiStatus();
-                
-                // Wait a moment for backend to pick up the key
-                setTimeout(() => {
-                    const message = isEditMode 
-                        ? '✅ API key updated! Token metrics will refresh shortly.'
-                        : '✅ API key configured! Token metrics will update shortly.';
-                    alert(message);
-                }, 500);
-            } else {
-                alert('Error saving API key');
-            }
+
+            console.log('✅ Admin key saved');
+            closeModal();
+            checkApiStatus();
+            setTimeout(() => alert('Admin key saved! Cost metrics will refresh shortly.'), 300);
         } catch (error) {
-            console.error('Error saving API key:', error);
-            alert('Error saving API key');
+            console.error('Error saving admin key:', error);
+            alert('Error saving admin key');
         } finally {
             saveBtn.disabled = false;
-            saveBtn.textContent = isEditMode ? 'Update API Key' : 'Add API Key';
+            saveBtn.textContent = 'Save Configuration';
         }
     });
-    
-    // Allow Enter to submit
-    apiKeyInput?.addEventListener('keypress', (e) => {
+
+    // Add agent
+    addAgentBtn?.addEventListener('click', async () => {
+        const name = document.getElementById('new-agent-name').value.trim();
+        const apiKeyId = document.getElementById('new-agent-keyid').value.trim();
+
+        if (!name || !apiKeyId) {
+            alert('Both agent name and API key ID are required');
+            return;
+        }
+
+        try {
+            const resp = await fetch('/api/agents/add', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, apiKeyId })
+            });
+
+            if (resp.ok) {
+                document.getElementById('new-agent-name').value = '';
+                document.getElementById('new-agent-keyid').value = '';
+                await loadAgentsConfigIntoModal();
+            } else {
+                const err = await resp.json();
+                alert(err.error || 'Failed to add agent');
+            }
+        } catch (error) {
+            console.error('Error adding agent:', error);
+            alert('Error adding agent');
+        }
+    });
+
+    // Lookup org keys
+    lookupBtn?.addEventListener('click', async () => {
+        lookupBtn.textContent = 'Loading...';
+        lookupBtn.disabled = true;
+        try {
+            const resp = await fetch('/api/agents/list-org-keys');
+            if (resp.ok) {
+                const data = await resp.json();
+                renderOrgKeysDropdown(data.keys);
+            } else {
+                const err = await resp.json();
+                alert(err.error || 'Failed to fetch org keys');
+            }
+        } catch (error) {
+            alert('Error fetching org keys');
+        } finally {
+            lookupBtn.textContent = 'Lookup Org Keys (via Admin API)';
+            lookupBtn.disabled = false;
+        }
+    });
+
+    // Enter key support
+    document.getElementById('admin-key-input')?.addEventListener('keypress', (e) => {
         if (e.key === 'Enter') saveBtn?.click();
     });
-    apiEndpointInput?.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') saveBtn?.click();
+    document.getElementById('new-agent-keyid')?.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') addAgentBtn?.click();
+    });
+}
+
+// Load agents config into modal
+async function loadAgentsConfigIntoModal() {
+    try {
+        const resp = await fetch('/api/agents/config');
+        const config = await resp.json();
+
+        // Admin key status
+        const statusEl = document.getElementById('admin-key-status');
+        if (statusEl) {
+            if (config.adminKeySet) {
+                statusEl.innerHTML = `<span style="color: var(--accent-green);">Admin key configured (${config.adminKeyMasked})</span>`;
+            } else {
+                statusEl.innerHTML = `<span style="color: var(--accent-red);">No admin key configured</span>`;
+            }
+        }
+
+        // Show/hide lookup section
+        const lookupSection = document.getElementById('agent-lookup-section');
+        if (lookupSection) {
+            lookupSection.style.display = config.adminKeySet ? 'block' : 'none';
+        }
+
+        // Render agent entries
+        const listEl = document.getElementById('agent-entries-list');
+        if (!listEl) return;
+
+        let html = '';
+        (config.agents || []).forEach(agent => {
+            html += `
+                <div class="agent-entry">
+                    <span class="agent-dot" style="background: ${agent.color || '#007acc'};"></span>
+                    <span class="agent-entry-name">${escapeHtml(agent.name)}</span>
+                    <span class="agent-entry-keyid">${escapeHtml(agent.apiKeyId)}</span>
+                    <button class="btn-remove-agent" data-keyid="${escapeHtml(agent.apiKeyId)}">&times;</button>
+                </div>
+            `;
+        });
+        listEl.innerHTML = html || '<div class="help-text">No agents configured. Add agents below.</div>';
+
+        // Bind remove buttons
+        listEl.querySelectorAll('.btn-remove-agent').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const keyId = btn.dataset.keyid;
+                try {
+                    await fetch('/api/agents/remove', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ apiKeyId: keyId })
+                    });
+                    await loadAgentsConfigIntoModal();
+                } catch (error) {
+                    console.error('Error removing agent:', error);
+                }
+            });
+        });
+    } catch (error) {
+        console.error('Error loading agents config:', error);
+    }
+}
+
+// Render org keys dropdown for selection
+function renderOrgKeysDropdown(keys) {
+    const dropdown = document.getElementById('org-keys-dropdown');
+    if (!dropdown) return;
+
+    if (!keys || keys.length === 0) {
+        dropdown.innerHTML = '<div class="help-text">No API keys found in organization</div>';
+        dropdown.style.display = 'block';
+        return;
+    }
+
+    let html = '';
+    keys.forEach(key => {
+        html += `
+            <div class="org-key-item" data-keyid="${escapeHtml(key.id)}" data-keyname="${escapeHtml(key.name || 'Unnamed')}">
+                <span class="org-key-name">${escapeHtml(key.name || 'Unnamed')}</span>
+                <span class="org-key-id">${escapeHtml(key.id)}</span>
+            </div>
+        `;
+    });
+    dropdown.innerHTML = html;
+    dropdown.style.display = 'block';
+
+    // Click to populate fields
+    dropdown.querySelectorAll('.org-key-item').forEach(item => {
+        item.addEventListener('click', () => {
+            document.getElementById('new-agent-name').value = item.dataset.keyname;
+            document.getElementById('new-agent-keyid').value = item.dataset.keyid;
+            dropdown.style.display = 'none';
+        });
     });
 }
 
@@ -262,6 +385,11 @@ function handleMessage(data) {
         case 'apiStatus':
             updateApiStatus(data.data.apiKeySet);
             break;
+        case 'agentConfigUpdate':
+            if (data.data.agentConfig) {
+                window.agentConfig = data.data.agentConfig;
+            }
+            break;
     }
 }
 
@@ -298,6 +426,11 @@ function updateAllData(data) {
     // Store agent config globally
     if (data.agentConfig) {
         window.agentConfig = data.agentConfig;
+    }
+
+    // Store agents list for modal
+    if (data.agentsList) {
+        window.agentsList = data.agentsList;
     }
     
     // Check API status if provided
@@ -665,14 +798,14 @@ function updateGatewayStatus(status) {
 // Update token metrics display
 function updateTokenMetricsDisplay(metrics) {
     if (!metrics) return;
-    
+
     // Today's live usage - big number at top
     const todayCost = document.getElementById('today-cost');
     if (todayCost && metrics.today) {
         const cost = metrics.today.cost || 0;
         todayCost.textContent = `$${cost.toFixed(4)}`;
     }
-    
+
     // All-Time: yesterday (cumulative through yesterday) + today (live)
     const alltimeCost = document.getElementById('alltime-cost');
     if (alltimeCost && metrics.allTime && metrics.today) {
@@ -681,11 +814,17 @@ function updateTokenMetricsDisplay(metrics) {
         const allTimeTotal = yesterdayTotal + todayTotal;
         alltimeCost.textContent = `All-Time: $${allTimeTotal.toFixed(2)}`;
     }
-    
+
+    // Per-agent cost breakdown (from Usage Report API group_by api_key_id)
+    if (metrics.perAgent) {
+        updatePerAgentCostsDisplay(metrics.perAgent);
+    }
+
     console.log('💰 Token Metrics:', {
         today_live: metrics.today ? `$${metrics.today.cost.toFixed(4)}` : 'N/A',
         yesterday_cumulative: `$${(metrics.allTime.total?.cost || 0).toFixed(2)}`,
-        all_time_total: `$${((metrics.allTime.total?.cost || 0) + (metrics.today?.cost || 0)).toFixed(2)}`
+        all_time_total: `$${((metrics.allTime.total?.cost || 0) + (metrics.today?.cost || 0)).toFixed(2)}`,
+        perAgentKeys: metrics.perAgent ? Object.keys(metrics.perAgent).length : 0
     });
 }
 
@@ -719,29 +858,77 @@ function updateModelUsageDisplay(modelUsage) {
     console.log('📊 Model Usage %:', modelUsage);
 }
 
-// Display agent costs breakdown (all-time)
+// Display agent costs breakdown (all-time) - legacy from model history
 function updateAgentCostsDisplay(agentCosts) {
+    // If per-agent API costs are already displayed, skip legacy display
+    if (window._perAgentDisplayed) return;
+
     const totalEl = document.getElementById('cost-by-bot-total');
     const breakdownEl = document.getElementById('bot-breakdown');
-    
+
     if (!totalEl || !breakdownEl) return;
-    
+
     const total = agentCosts.total || 0;
     totalEl.textContent = `$${total.toFixed(2)}`;
-    
+
     // Build breakdown HTML
     let html = '';
     const agentIcons = { atlas: '🔵', nate: '🔴', alex: '🟢' };
-    
+
     Object.entries(agentCosts.agents || {}).forEach(([agent, data]) => {
         const icon = agentIcons[agent] || '⚪';
         const percent = data.percent || 0;
         html += `<div>${icon} ${agent.charAt(0).toUpperCase() + agent.slice(1)}: $${data.cost.toFixed(2)} (${percent}%)</div>`;
     });
-    
+
     breakdownEl.innerHTML = html || '<div>No data yet</div>';
-    
-    console.log('💳 Agent Costs:', agentCosts);
+
+    console.log('💳 Agent Costs (legacy):', agentCosts);
+}
+
+// Display per-agent costs from Usage Report API (group_by api_key_id)
+function updatePerAgentCostsDisplay(perAgent) {
+    const totalEl = document.getElementById('cost-by-bot-total');
+    const breakdownEl = document.getElementById('bot-breakdown');
+
+    if (!totalEl || !breakdownEl) return;
+
+    const agents = Object.entries(perAgent);
+    if (agents.length === 0) return;
+
+    window._perAgentDisplayed = true;
+
+    let totalAllTime = 0;
+    let html = `
+        <div class="agent-cost-header">
+            <span></span>
+            <span>today</span>
+            <span>all-time</span>
+            <span>est/day</span>
+        </div>
+    `;
+
+    agents.forEach(([slug, data]) => {
+        totalAllTime += data.allTime || 0;
+        const dotColor = data.color || '#007acc';
+
+        html += `
+            <div class="agent-cost-row">
+                <span class="agent-cost-name">
+                    <span class="agent-dot" style="background: ${dotColor};"></span>
+                    ${escapeHtml(data.name)}
+                </span>
+                <span class="agent-cost-today">$${(data.today || 0).toFixed(2)}</span>
+                <span class="agent-cost-alltime">$${(data.allTime || 0).toFixed(2)}</span>
+                <span class="agent-cost-daily">~$${(data.estimatedDaily || 0).toFixed(2)}</span>
+            </div>
+        `;
+    });
+
+    totalEl.textContent = `$${totalAllTime.toFixed(2)}`;
+    breakdownEl.innerHTML = html;
+
+    console.log('💳 Per-Agent Costs (API):', perAgent);
 }
 
 // Format large token numbers
