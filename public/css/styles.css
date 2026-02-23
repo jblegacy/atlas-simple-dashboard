@@ -551,6 +551,15 @@ body {
     border-color: var(--accent-blue);
 }
 
+.tab-btn[data-tab="BACKLOG"] {
+    border-color: var(--accent-orange);
+}
+
+.tab-btn[data-tab="BACKLOG"].active {
+    background-color: var(--accent-orange);
+    color: var(--bg-primary);
+}
+
 .tab-btn[data-tab="STUCK"] {
     border-color: var(--accent-yellow);
 }
@@ -974,6 +983,10 @@ body {
 
 .status-badge.queue {
     color: var(--text-secondary);
+}
+
+.status-badge.backlog {
+    color: var(--accent-orange);
 }
 
 .progress-bar {

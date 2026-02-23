@@ -590,7 +590,13 @@ function filterAndRenderWorkQueue() {
     }
     
     // Filter tasks by current tab
-    const filteredTasks = allTasks.filter(item => item.status === currentTab);
+    // BACKLOG tab also shows QUEUE status (legacy cron jobs)
+    const filteredTasks = allTasks.filter(item => {
+        if (currentTab === 'BACKLOG') {
+            return item.status === 'BACKLOG' || item.status === 'QUEUE';
+        }
+        return item.status === currentTab;
+    });
     
     if (filteredTasks.length === 0) {
         smoothSetHTML(workQueueDiv, `<div class="loading">No ${currentTab.toLowerCase()} tasks</div>`);
@@ -858,14 +864,16 @@ function updateTokenMetricsDisplay(metrics) {
         todayCost.textContent = `$${cost.toFixed(4)}`;
     }
 
-    // All-Time: yesterday (cumulative through yesterday) + today (live)
+    // All-Time: actual billed (Cost API) + today's live estimate (Usage API)
     const alltimeCost = document.getElementById('alltime-cost');
-    if (alltimeCost && metrics.allTime && metrics.today) {
-        const yesterdayTotal = metrics.allTime.total?.cost || 0;
-        const todayTotal = metrics.today.cost || 0;
-        const allTimeTotal = yesterdayTotal + todayTotal;
+    if (alltimeCost && metrics.allTime) {
+        const billedTotal = metrics.allTime.total?.cost || 0;
+        const todayEstimate = metrics.today?.cost || 0;
+        const allTimeTotal = billedTotal + todayEstimate;
+        const isActual = metrics.allTime.total?.source === 'cost_api';
+        const sourceLabel = isActual ? 'Actual' : 'Est';
         const cacheStr = metrics.cacheHitRate !== undefined ? ` | Cache: ${metrics.cacheHitRate}%` : '';
-        alltimeCost.textContent = `All-Time: $${allTimeTotal.toFixed(2)}${cacheStr}`;
+        alltimeCost.textContent = `All-Time (${sourceLabel}): $${allTimeTotal.toFixed(2)}${cacheStr}`;
     }
 
     // Projected monthly cost (Feature 1)
@@ -916,9 +924,10 @@ function updateTokenMetricsDisplay(metrics) {
     });
 
     console.log('💰 Token Metrics:', {
-        today_live: metrics.today ? `$${metrics.today.cost.toFixed(4)}` : 'N/A',
-        yesterday_cumulative: `$${(metrics.allTime.total?.cost || 0).toFixed(2)}`,
-        all_time_total: `$${((metrics.allTime.total?.cost || 0) + (metrics.today?.cost || 0)).toFixed(2)}`,
+        today_live_estimate: metrics.today ? `$${metrics.today.cost.toFixed(4)}` : 'N/A',
+        alltime_billed: `$${(metrics.allTime.total?.cost || 0).toFixed(2)}`,
+        alltime_source: metrics.allTime.total?.source || 'unknown',
+        combined_total: `$${((metrics.allTime.total?.cost || 0) + (metrics.today?.cost || 0)).toFixed(2)}`,
         perAgentKeys: metrics.perAgent ? Object.keys(metrics.perAgent).length : 0
     });
 }
