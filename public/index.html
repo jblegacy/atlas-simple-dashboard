@@ -28,6 +28,10 @@
                 <div class="status-dot"></div>
                 <span>Gateway Active</span>
             </div>
+            <button class="btn-export" id="btn-export-csv" title="Export cost data as CSV">CSV</button>
+            <div class="metrics-updated" id="metrics-updated">
+                <span id="metrics-updated-text">Metrics: --</span>
+            </div>
         </div>
     </div>
 
@@ -82,11 +86,15 @@
                     </div>
                     <div class="help-text" style="font-size:10px;">Configure agent keys via API settings</div>
                 </div>
+                <div class="agent-activity" id="agent-activity"></div>
             </div>
             <div class="stat-card token-alltime">
                 <div class="stat-value" id="today-cost">$0.00</div>
                 <div class="stat-label">Today's Live<br>Usage Cost</div>
                 <div class="token-cost" id="alltime-cost">All-Time: $0.00</div>
+                <div class="token-projected" id="projected-monthly"></div>
+                <div class="cost-trend" id="cost-trend"></div>
+                <canvas id="cost-chart" height="50"></canvas>
             </div>
         </div>
 
@@ -142,6 +150,13 @@
                 <div class="panel-header">
                     <h3>Live Logs</h3>
                 </div>
+                <div class="log-filters">
+                    <input type="text" id="log-search" class="log-search-input" placeholder="Search logs...">
+                    <button class="log-level-btn active" data-level="info">INFO</button>
+                    <button class="log-level-btn active" data-level="warning">WARN</button>
+                    <button class="log-level-btn active" data-level="error">ERROR</button>
+                    <button class="log-level-btn active" data-level="debug">DEBUG</button>
+                </div>
                 <div class="panel-content" id="live-logs">
                     <div class="loading">Loading...</div>
                 </div>
@@ -161,6 +176,7 @@
             <div class="modal-tabs">
                 <button class="modal-tab active" data-modal-tab="admin">Admin Key</button>
                 <button class="modal-tab" data-modal-tab="agents">Agent Keys</button>
+                <button class="modal-tab" data-modal-tab="settings">Settings</button>
             </div>
 
             <!-- Admin Key Tab -->
@@ -225,6 +241,24 @@
                 </div>
             </div>
 
+            <!-- Settings Tab -->
+            <div class="modal-body modal-tab-content" id="tab-settings">
+                <p class="modal-description">
+                    Configure cost alerts and other dashboard settings.
+                </p>
+                <div class="form-group">
+                    <label for="cost-threshold-input">Monthly Cost Alert Threshold ($)</label>
+                    <input type="number" id="cost-threshold-input"
+                           placeholder="e.g., 500" step="10" min="0"
+                           class="api-key-input">
+                    <p class="help-text">
+                        Get a visual alert when projected monthly cost exceeds this amount. Leave blank to disable.
+                    </p>
+                </div>
+                <button class="btn-save" id="btn-save-threshold" style="width:100%;">Save Threshold</button>
+                <div class="admin-key-status" id="threshold-status" style="margin-top:8px;"></div>
+            </div>
+
             <div class="modal-footer">
                 <button class="btn-cancel" id="btn-cancel">Cancel</button>
                 <button class="btn-save" id="btn-save-api">Save Configuration</button>
@@ -232,6 +266,7 @@
         </div>
     </div>
 
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="js/dashboard.js"></script>
 </body>
 </html>

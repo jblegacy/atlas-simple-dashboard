@@ -212,7 +212,9 @@ async function loadTasks() {
                 agent: row.agent,
                 machine: row.machine,
                 createdAt: row.created_at,
-                updatedAt: row.updated_at
+                updatedAt: row.updated_at,
+                startedAt: row.started_at,
+                completedAt: row.completed_at
             }));
 
             console.log(`✅ Loaded ${tasks.length} tasks from Supabase`);
@@ -486,6 +488,33 @@ async function sendHeartbeat() {
     }
 }
 
+// ─── Agent Heartbeat State (Feature 2) ──────────────────────────────────────
+let agentHeartbeats = {};
+
+function broadcastAgentActivity() {
+    const now = Date.now();
+    const activity = {};
+
+    Object.entries(agentHeartbeats).forEach(([agent, data]) => {
+        const elapsed = now - data.lastSeen;
+        let status = 'active';
+        if (elapsed > 5 * 60 * 1000) status = 'stale';
+        else if (elapsed > 60 * 1000) status = 'idle';
+
+        activity[agent] = {
+            name: data.name || agent,
+            status,
+            currentTask: data.currentTask || null,
+            model: data.model || null,
+            machine: data.machine || null,
+            lastSeen: data.lastSeen,
+            elapsed: elapsed
+        };
+    });
+
+    broadcast({ type: 'agentActivity', data: activity });
+}
+
 // ─── Load Anthropic config on startup ───────────────────────────────────────
 const savedConfig = loadConfig();
 if (savedConfig && savedConfig.apiKey) {
@@ -551,6 +580,16 @@ let tokenMetrics = {
 // Rate limit tracking
 let rateLimitHitCount = 0;
 let rateLimitBackoffMs = 0;
+
+// Cost alert threshold (Feature 1)
+let costAlertThreshold = null;
+try {
+    const savedCfg = loadConfig();
+    if (savedCfg && savedCfg.costAlertThreshold) {
+        costAlertThreshold = savedCfg.costAlertThreshold;
+        console.log(`✅ Cost alert threshold loaded: $${costAlertThreshold}`);
+    }
+} catch (e) { /* ignore */ }
 
 // Token costs (per million tokens)
 const tokenCosts = {
@@ -627,11 +666,13 @@ function extractDailyBreakdown(usageData, groupByAgent = false) {
                     if (groupByAgent && result.api_key_id) {
                         const keyId = result.api_key_id;
                         if (!perAgent[keyId]) {
-                            perAgent[keyId] = { tokens: 0, cost: 0, dailyCosts: {}, modelTokens: {} };
+                            perAgent[keyId] = { tokens: 0, cost: 0, dailyCosts: {}, modelTokens: {}, cacheRead: 0, uncachedInput: 0 };
                         }
                         perAgent[keyId].tokens += dayTokens;
                         perAgent[keyId].cost += dayCost;
                         perAgent[keyId].modelTokens[modelTier] = (perAgent[keyId].modelTokens[modelTier] || 0) + dayTokens;
+                        perAgent[keyId].cacheRead += (result.cache_read_input_tokens || 0);
+                        perAgent[keyId].uncachedInput += (result.uncached_input_tokens || 0);
 
                         const date = bucket.starting_at.split('T')[0];
                         perAgent[keyId].dailyCosts[date] =
@@ -664,7 +705,14 @@ function extractDailyBreakdown(usageData, groupByAgent = false) {
         }
     }
 
-    return { dailyBreakdown, totalTokens, totalCost, perAgent, perModel };
+    // Global cache totals
+    let globalCacheRead = 0, globalUncachedInput = 0;
+    dailyBreakdown.forEach(d => {
+        globalCacheRead += d.cache_read;
+        globalUncachedInput += d.uncached_input;
+    });
+
+    return { dailyBreakdown, totalTokens, totalCost, perAgent, perModel, globalCacheRead, globalUncachedInput };
 }
 
 // Extract total tokens from API response (legacy function)
@@ -751,7 +799,7 @@ function fetchTodaysUsage(groupByAgent = false) {
                         dataLength: usageData.data?.length
                     });
 
-                    const { dailyBreakdown, totalTokens, totalCost: cost, perAgent, perModel } = extractDailyBreakdown(usageData, groupByAgent);
+                    const { dailyBreakdown, totalTokens, totalCost: cost, perAgent, perModel, globalCacheRead, globalUncachedInput } = extractDailyBreakdown(usageData, groupByAgent);
 
                     if (dailyBreakdown.length > 0) {
                         console.log('✅ Today\'s usage (minute buckets):', {
@@ -764,7 +812,7 @@ function fetchTodaysUsage(groupByAgent = false) {
                         console.log('✅ Today\'s usage: 0 tokens, $0.00 (no usage yet)');
                     }
 
-                    resolve({ totalTokens, cost, perAgent, perModel });
+                    resolve({ totalTokens, cost, perAgent, perModel, dailyBreakdown, globalCacheRead, globalUncachedInput });
                 } catch (parseError) {
                     console.log('⚠️  Error parsing today\'s usage:', parseError.message);
                     resolve(null);
@@ -778,7 +826,7 @@ function fetchTodaysUsage(groupByAgent = false) {
 }
 
 // Get all-time costs (token-based calculation with per-model pricing)
-function fetchAllTimeCosts(nextPage = null, groupByAgent = false, accumulatedPerAgent = null, accumulatedPerModel = null) {
+function fetchAllTimeCosts(nextPage = null, groupByAgent = false, accumulatedPerAgent = null, accumulatedPerModel = null, accumulatedBreakdown = null, accumulatedCacheRead = 0, accumulatedUncached = 0) {
     return new Promise((resolve) => {
         const apiKey = getEffectiveApiKey();
 
@@ -862,17 +910,19 @@ function fetchAllTimeCosts(nextPage = null, groupByAgent = false, accumulatedPer
                         dataLength: usageData.data?.length
                     });
 
-                    const { dailyBreakdown, totalTokens: pageTokens, totalCost: pageCost, perAgent: pagePerAgent, perModel: pagePerModel } = extractDailyBreakdown(usageData, groupByAgent);
+                    const { dailyBreakdown, totalTokens: pageTokens, totalCost: pageCost, perAgent: pagePerAgent, perModel: pagePerModel, globalCacheRead: pageCacheRead, globalUncachedInput: pageUncached } = extractDailyBreakdown(usageData, groupByAgent);
 
                     // Merge per-agent data across pages
                     const mergedPerAgent = accumulatedPerAgent || {};
                     if (groupByAgent) {
                         Object.entries(pagePerAgent).forEach(([keyId, data]) => {
                             if (!mergedPerAgent[keyId]) {
-                                mergedPerAgent[keyId] = { tokens: 0, cost: 0, dailyCosts: {}, modelTokens: {} };
+                                mergedPerAgent[keyId] = { tokens: 0, cost: 0, dailyCosts: {}, modelTokens: {}, cacheRead: 0, uncachedInput: 0 };
                             }
                             mergedPerAgent[keyId].tokens += data.tokens;
                             mergedPerAgent[keyId].cost += data.cost;
+                            mergedPerAgent[keyId].cacheRead += (data.cacheRead || 0);
+                            mergedPerAgent[keyId].uncachedInput += (data.uncachedInput || 0);
                             Object.entries(data.dailyCosts).forEach(([date, cost]) => {
                                 mergedPerAgent[keyId].dailyCosts[date] =
                                     (mergedPerAgent[keyId].dailyCosts[date] || 0) + cost;
@@ -890,6 +940,11 @@ function fetchAllTimeCosts(nextPage = null, groupByAgent = false, accumulatedPer
                     Object.entries(pagePerModel).forEach(([model, tokens]) => {
                         mergedPerModel[model] = (mergedPerModel[model] || 0) + tokens;
                     });
+
+                    // Accumulate dailyBreakdown and cache totals across pages
+                    const mergedBreakdown = [...(accumulatedBreakdown || []), ...dailyBreakdown];
+                    const mergedCacheRead = accumulatedCacheRead + (pageCacheRead || 0);
+                    const mergedUncached = accumulatedUncached + (pageUncached || 0);
 
                     console.log(`   API returned ${usageData.data?.length || 0} buckets`);
 
@@ -914,7 +969,7 @@ function fetchAllTimeCosts(nextPage = null, groupByAgent = false, accumulatedPer
 
                     if (usageData.has_more && usageData.next_page) {
                         console.log(`📄 Paginating all-time usage (next_page: ${usageData.next_page})...`);
-                        fetchAllTimeCosts(usageData.next_page, groupByAgent, mergedPerAgent, mergedPerModel).then((nextPageData) => {
+                        fetchAllTimeCosts(usageData.next_page, groupByAgent, mergedPerAgent, mergedPerModel, mergedBreakdown, mergedCacheRead, mergedUncached).then((nextPageData) => {
                             if (nextPageData) {
                                 const totalTokens = pageTokens + nextPageData.totalTokens;
                                 const cost = pageCost + nextPageData.cost;
@@ -925,7 +980,14 @@ function fetchAllTimeCosts(nextPage = null, groupByAgent = false, accumulatedPer
                                     pages: 'multiple'
                                 });
 
-                                resolve({ totalTokens, cost, perAgent: nextPageData.perAgent || mergedPerAgent, perModel: nextPageData.perModel || mergedPerModel });
+                                resolve({
+                                    totalTokens, cost,
+                                    perAgent: nextPageData.perAgent || mergedPerAgent,
+                                    perModel: nextPageData.perModel || mergedPerModel,
+                                    dailyBreakdown: nextPageData.dailyBreakdown || mergedBreakdown,
+                                    globalCacheRead: nextPageData.globalCacheRead || mergedCacheRead,
+                                    globalUncachedInput: nextPageData.globalUncachedInput || mergedUncached
+                                });
                             }
                         });
                     } else {
@@ -937,7 +999,13 @@ function fetchAllTimeCosts(nextPage = null, groupByAgent = false, accumulatedPer
                             agentKeys: groupByAgent ? Object.keys(mergedPerAgent).length : 'N/A'
                         });
 
-                        resolve({ totalTokens: pageTokens, cost: pageCost, perAgent: mergedPerAgent, perModel: mergedPerModel });
+                        resolve({
+                            totalTokens: pageTokens, cost: pageCost,
+                            perAgent: mergedPerAgent, perModel: mergedPerModel,
+                            dailyBreakdown: mergedBreakdown,
+                            globalCacheRead: mergedCacheRead,
+                            globalUncachedInput: mergedUncached
+                        });
                     }
                 } catch (parseError) {
                     console.log('⚠️  Error parsing all-time usage:', parseError.message);
@@ -1088,6 +1156,7 @@ wss.on('connection', (ws) => {
       agentsList: (agentsConfig.agents || []).map(a => ({
         name: a.name, slug: a.slug, color: a.color, apiKeyId: a.apiKeyId
       })),
+      agentHeartbeats: agentHeartbeats,
       gatewayStatus: 'connected',
       supabaseStatus: supabaseReady ? 'connected' : 'disconnected',
       apiStatus: {
@@ -1375,6 +1444,12 @@ async function updateTokenMetrics() {
         models[model] = agentTotalTokens > 0 ? Math.round((tokens / agentTotalTokens) * 100) : 0;
       });
 
+      // Per-agent cache hit rate
+      const agentCacheRead = (allTimeAgentData?.cacheRead || 0) + (todayAgentData?.cacheRead || 0);
+      const agentUncached = (allTimeAgentData?.uncachedInput || 0) + (todayAgentData?.uncachedInput || 0);
+      const totalInput = agentCacheRead + agentUncached;
+      const cacheHitRate = totalInput > 0 ? Math.round((agentCacheRead / totalInput) * 100) : 0;
+
       const slug = agent.slug || agent.name.toLowerCase();
       agentBreakdown[slug] = {
         name: agent.name,
@@ -1383,7 +1458,8 @@ async function updateTokenMetrics() {
         allTime: (allTimeAgentData?.cost || 0) + (todayAgentData?.cost || 0),
         estimatedDaily: estimatedDaily,
         todayTokens: todayAgentData?.tokens || 0,
-        models: models
+        models: models,
+        cacheHitRate: cacheHitRate
       };
     });
 
@@ -1409,6 +1485,68 @@ async function updateTokenMetrics() {
     tokenMetrics.modelBreakdown = modelBreakdown;
     console.log('📊 Global model breakdown:', Object.entries(modelBreakdown).map(([m, p]) => `${m}:${p}%`).join(', '));
   }
+
+  // Global cache hit rate
+  const globalCR = (allTimeCosts?.globalCacheRead || 0) + (todaysData?.globalCacheRead || 0);
+  const globalUI = (allTimeCosts?.globalUncachedInput || 0) + (todaysData?.globalUncachedInput || 0);
+  const globalTotalInput = globalCR + globalUI;
+  if (globalTotalInput > 0) {
+    tokenMetrics.cacheHitRate = Math.round((globalCR / globalTotalInput) * 100);
+    console.log(`📦 Global cache hit rate: ${tokenMetrics.cacheHitRate}% (${globalCR.toLocaleString()} cached / ${globalTotalInput.toLocaleString()} total input)`);
+  }
+
+  // ── Cost Projection & Alerts (Feature 1) ──────────────────────────────
+  // Build daily cost map from allTime + today dailyBreakdown entries
+  const dailyCostMap = {};
+  const allBreakdowns = [
+    ...(allTimeCosts?.dailyBreakdown || []),
+    ...(todaysData?.dailyBreakdown || [])
+  ];
+  allBreakdowns.forEach(entry => {
+    const date = entry.date;
+    dailyCostMap[date] = (dailyCostMap[date] || 0) + (entry.cost || 0);
+  });
+
+  // Build sorted daily cost history (last 30 days)
+  const sortedDays = Object.entries(dailyCostMap)
+    .map(([date, cost]) => ({ date, cost }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  const dailyCostHistory = sortedDays.slice(-30);
+  tokenMetrics.dailyCostHistory = dailyCostHistory;
+
+  // 7-day rolling averages for projection
+  const last7 = sortedDays.slice(-7);
+  const prior7 = sortedDays.slice(-14, -7);
+  const avgDaily7 = last7.length > 0
+    ? last7.reduce((sum, d) => sum + d.cost, 0) / last7.length
+    : 0;
+  const avgPrior7 = prior7.length > 0
+    ? prior7.reduce((sum, d) => sum + d.cost, 0) / prior7.length
+    : 0;
+
+  // Month-to-date cost and projection
+  const nowDate = new Date();
+  const monthStart = `${nowDate.getUTCFullYear()}-${String(nowDate.getUTCMonth() + 1).padStart(2, '0')}-01`;
+  const mtdCost = sortedDays
+    .filter(d => d.date >= monthStart)
+    .reduce((sum, d) => sum + d.cost, 0);
+  const dayOfMonth = nowDate.getUTCDate();
+  const daysInMonth = new Date(nowDate.getUTCFullYear(), nowDate.getUTCMonth() + 1, 0).getUTCDate();
+  const daysRemaining = daysInMonth - dayOfMonth;
+  const projectedMonthly = mtdCost + (avgDaily7 * daysRemaining);
+  const weekOverWeek = avgPrior7 > 0
+    ? ((avgDaily7 - avgPrior7) / avgPrior7) * 100
+    : 0;
+
+  tokenMetrics.projectedMonthly = projectedMonthly;
+  tokenMetrics.weekOverWeek = weekOverWeek;
+  tokenMetrics.mtdCost = mtdCost;
+  tokenMetrics.avgDaily7 = avgDaily7;
+  tokenMetrics.costAlertThreshold = costAlertThreshold;
+  tokenMetrics.thresholdExceeded = costAlertThreshold && projectedMonthly > costAlertThreshold;
+
+  console.log(`📈 Cost projection: MTD=$${mtdCost.toFixed(2)}, avg7d=$${avgDaily7.toFixed(2)}/d, projected=$${projectedMonthly.toFixed(2)}/mo, WoW=${weekOverWeek.toFixed(1)}%${tokenMetrics.thresholdExceeded ? ' ⚠️ THRESHOLD EXCEEDED' : ''}`);
 
   if (todaysData && allTimeCosts) {
     rateLimitHitCount = 0;
@@ -1508,6 +1646,7 @@ setInterval(updateLiveLogs, 3000);
 setInterval(updateTokenMetrics, 5 * 60 * 1000);
 setInterval(sendHeartbeat, 30000);  // Agent heartbeat every 30s
 setInterval(syncTasksFromSupabase, 30000);  // Safety sync from Supabase every 30s
+setInterval(broadcastAgentActivity, 30000);  // Periodic stale check for agent heartbeats
 
 // ─── File watcher ───────────────────────────────────────────────────────────
 const watcher = chokidar.watch('.', {
@@ -1769,6 +1908,7 @@ app.post('/api/tasks/add', async (req, res) => {
 
   if (supabaseReady) {
     try {
+      const isActive = ['IN_PROGRESS', 'ACTIVE'].includes(status.toUpperCase());
       const { data, error } = await supabase.from('tasks').insert({
         title,
         description,
@@ -1776,7 +1916,8 @@ app.post('/api/tasks/add', async (req, res) => {
         progress: status.toUpperCase() === 'IN_PROGRESS' ? 50 : 0,
         eta: 'Agent-generated',
         agent: taskAgent,
-        machine: taskMachine
+        machine: taskMachine,
+        started_at: isActive ? new Date().toISOString() : null
       }).select().single();
 
       if (error) throw error;
@@ -1791,7 +1932,9 @@ app.post('/api/tasks/add', async (req, res) => {
         agent: data.agent,
         machine: data.machine,
         createdAt: data.created_at,
-        updatedAt: data.updated_at
+        updatedAt: data.updated_at,
+        startedAt: data.started_at,
+        completedAt: data.completed_at
       };
 
       manualTasks.unshift(newTask);
@@ -1839,6 +1982,17 @@ app.post('/api/tasks/update/:id', async (req, res) => {
       if (status) updates.status = status.toUpperCase();
       if (progress !== undefined) updates.progress = progress;
 
+      // Feature 11: Track started_at / completed_at on status transitions
+      if (status) {
+        const upper = status.toUpperCase();
+        if (['ACTIVE', 'IN_PROGRESS'].includes(upper)) {
+          updates.started_at = new Date().toISOString();
+        }
+        if (['COMPLETE', 'DONE'].includes(upper)) {
+          updates.completed_at = new Date().toISOString();
+        }
+      }
+
       const { data, error } = await supabase
         .from('tasks')
         .update(updates)
@@ -1856,6 +2010,8 @@ app.post('/api/tasks/update/:id', async (req, res) => {
         if (status) manualTasks[idx].status = status.toUpperCase();
         if (progress !== undefined) manualTasks[idx].progress = progress;
         manualTasks[idx].updatedAt = data.updated_at;
+        if (data.started_at) manualTasks[idx].startedAt = data.started_at;
+        if (data.completed_at) manualTasks[idx].completedAt = data.completed_at;
       }
 
       console.log(`✅ Task updated in Supabase: ${id}`);
@@ -1955,6 +2111,47 @@ app.get('/api/analytics/history', (req, res) => {
   res.json({ success: true, data: modelHistory });
 });
 
+// ─── CSV Export (Feature 9) ──────────────────────────────────────────────────
+app.get('/api/analytics/export-csv', async (req, res) => {
+    try {
+        const hasAgents = agentsConfig.agents && agentsConfig.agents.length > 0;
+        const allTimeData = await fetchAllTimeCosts(null, hasAgents);
+        const todayData = await fetchTodaysUsage(hasAgents);
+
+        const allBreakdown = [
+            ...(allTimeData?.dailyBreakdown || []),
+            ...(todayData?.dailyBreakdown || [])
+        ];
+
+        if (allBreakdown.length === 0) {
+            res.setHeader('Content-Type', 'text/csv');
+            res.setHeader('Content-Disposition', 'attachment; filename="cost-export.csv"');
+            return res.send('date,agent,model,input_tokens,cached_tokens,output_tokens,cost\nNo data available');
+        }
+
+        // Build CSV rows
+        let csv = 'date,agent,model,input_tokens,cached_tokens,output_tokens,cost\n';
+        allBreakdown.forEach(entry => {
+            // Resolve agent name from api_key_id
+            let agentName = 'unknown';
+            if (entry.api_key_id && apiKeyIdToAgent.has(entry.api_key_id)) {
+                agentName = apiKeyIdToAgent.get(entry.api_key_id).name;
+            }
+
+            csv += `${entry.date},${agentName},${entry.model || 'unknown'},${entry.uncached_input || 0},${entry.cache_read || 0},${entry.output || 0},${entry.cost.toFixed(6)}\n`;
+        });
+
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', `attachment; filename="cost-export-${new Date().toISOString().split('T')[0]}.csv"`);
+        res.send(csv);
+
+        console.log(`📤 CSV export: ${allBreakdown.length} rows`);
+    } catch (error) {
+        console.log('⚠️  CSV export error:', error.message);
+        res.status(500).json({ error: 'CSV export failed' });
+    }
+});
+
 // Task events history (perpetual audit log)
 app.get('/api/tasks/events', async (req, res) => {
   if (!supabaseReady) {
@@ -1992,6 +2189,70 @@ app.get('/api/agents/sessions', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// ─── Agent Heartbeat Endpoint (Feature 2) ───────────────────────────────────
+app.post('/api/agents/heartbeat', async (req, res) => {
+    const { agent, status, currentTask, model, machine } = req.body;
+
+    if (!agent) {
+        return res.status(400).json({ error: 'agent name is required' });
+    }
+
+    const slug = agent.toLowerCase().replace(/[^a-z0-9]/g, '');
+    agentHeartbeats[slug] = {
+        name: agent,
+        status: status || 'active',
+        currentTask: currentTask || null,
+        model: model || null,
+        machine: machine || os.hostname(),
+        lastSeen: Date.now()
+    };
+
+    // Upsert to Supabase agent_sessions if available
+    if (supabaseReady) {
+        try {
+            await supabase.from('agent_sessions').upsert({
+                agent: slug,
+                machine: machine || os.hostname(),
+                status: status || 'active',
+                current_task: currentTask || null,
+                current_model: model || null,
+                last_heartbeat: new Date().toISOString()
+            }, { onConflict: 'agent,machine' });
+        } catch (err) {
+            console.log('⚠️  Heartbeat upsert error:', err.message);
+        }
+    }
+
+    broadcastAgentActivity();
+    res.json({ success: true });
+});
+
+// ─── Cost Threshold Config (Feature 1) ──────────────────────────────────────
+app.get('/api/config/cost-threshold', (req, res) => {
+    res.json({ threshold: costAlertThreshold });
+});
+
+app.post('/api/config/cost-threshold', (req, res) => {
+    const { threshold } = req.body;
+    costAlertThreshold = threshold ? parseFloat(threshold) : null;
+
+    // Persist to config file
+    const currentConfig = loadConfig() || {};
+    currentConfig.costAlertThreshold = costAlertThreshold;
+    saveConfig(currentConfig);
+
+    console.log(`✅ Cost alert threshold ${costAlertThreshold ? 'set to $' + costAlertThreshold : 'cleared'}`);
+
+    // Re-evaluate threshold against current projection
+    if (tokenMetrics.projectedMonthly !== undefined) {
+        tokenMetrics.costAlertThreshold = costAlertThreshold;
+        tokenMetrics.thresholdExceeded = costAlertThreshold && tokenMetrics.projectedMonthly > costAlertThreshold;
+        broadcast({ type: 'tokenMetrics', data: tokenMetrics });
+    }
+
+    res.json({ success: true, threshold: costAlertThreshold });
 });
 
 // ─── Status API ─────────────────────────────────────────────────────────────
