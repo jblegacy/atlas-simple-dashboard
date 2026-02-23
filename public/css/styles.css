@@ -675,6 +675,10 @@ body {
     animation: slideIn 0.3s ease-out;
 }
 
+.modal-content-wide {
+    max-width: 650px;
+}
+
 @keyframes slideIn {
     from {
         transform: translateY(-20px);
@@ -1043,16 +1047,255 @@ body {
         gap: clamp(6px, 0.8vmin, 10px);
         align-items: flex-start;
     }
-    
+
     .header-right {
         width: 100%;
         flex-direction: column;
         gap: clamp(4px, 0.6vmin, 8px);
     }
-    
+
     .agent-badge,
     .connection-status-header {
         width: 100%;
         justify-content: center;
     }
+}
+
+/* ─── Modal Tabs ──────────────────────────────────────────────────────────── */
+.modal-tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.modal-tab {
+    flex: 1;
+    padding: 10px 16px;
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.2s;
+}
+
+.modal-tab:hover {
+    color: var(--text-primary);
+    background-color: var(--bg-tertiary);
+}
+
+.modal-tab.active {
+    color: var(--accent-blue);
+    border-bottom-color: var(--accent-blue);
+}
+
+.modal-tab-content {
+    display: none;
+}
+
+.modal-tab-content.active {
+    display: block;
+}
+
+/* ─── Agent Entries in Modal ──────────────────────────────────────────────── */
+.agent-entry {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background-color: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    margin-bottom: 6px;
+}
+
+.agent-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.agent-entry-name {
+    font-weight: 600;
+    color: var(--text-primary);
+    font-size: 12px;
+    min-width: 80px;
+}
+
+.agent-entry-keyid {
+    color: var(--text-secondary);
+    font-size: 11px;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.btn-remove-agent {
+    background: none;
+    border: 1px solid var(--border-color);
+    color: var(--accent-red);
+    cursor: pointer;
+    font-size: 16px;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 3px;
+    transition: all 0.2s;
+}
+
+.btn-remove-agent:hover {
+    background-color: rgba(244, 135, 113, 0.1);
+    border-color: var(--accent-red);
+}
+
+/* Agent add form */
+.agent-add-form {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border-color);
+}
+
+.form-row {
+    display: flex;
+    gap: 12px;
+}
+
+.form-group-half {
+    flex: 1;
+}
+
+.btn-add-agent {
+    width: 100%;
+    padding: 8px;
+    background-color: var(--bg-tertiary);
+    color: var(--accent-green);
+    border: 1px dashed var(--accent-green);
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    font-weight: 600;
+    margin-top: 8px;
+    transition: all 0.2s;
+}
+
+.btn-add-agent:hover {
+    background-color: rgba(78, 201, 176, 0.1);
+}
+
+/* Lookup section */
+.agent-lookup-section {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border-color);
+}
+
+.btn-lookup {
+    padding: 6px 12px;
+    background-color: var(--bg-tertiary);
+    color: var(--accent-blue);
+    border: 1px solid var(--accent-blue);
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    transition: all 0.2s;
+}
+
+.btn-lookup:hover {
+    background-color: rgba(0, 122, 204, 0.1);
+}
+
+.org-key-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 10px;
+    background-color: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 3px;
+    margin-top: 4px;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.org-key-item:hover {
+    border-color: var(--accent-blue);
+    background-color: var(--bg-tertiary);
+}
+
+.org-key-name {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.org-key-id {
+    color: var(--text-secondary);
+    font-size: 10px;
+}
+
+/* Admin key status */
+.admin-key-status {
+    margin-top: 8px;
+    font-size: 12px;
+}
+
+/* ─── Per-Agent Cost Rows in Scorecard ────────────────────────────────────── */
+.agent-cost-header {
+    display: grid;
+    grid-template-columns: 1fr 45px 55px 50px;
+    gap: 4px;
+    font-size: 9px;
+    color: var(--text-secondary);
+    opacity: 0.6;
+    margin-bottom: 2px;
+    text-align: right;
+}
+
+.agent-cost-header span:first-child {
+    text-align: left;
+}
+
+.agent-cost-row {
+    display: grid;
+    grid-template-columns: 1fr 45px 55px 50px;
+    gap: 4px;
+    align-items: center;
+    line-height: 1.8;
+    font-size: 10px;
+}
+
+.agent-cost-name {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.agent-cost-today {
+    color: var(--accent-green);
+    text-align: right;
+    font-size: 9px;
+}
+
+.agent-cost-alltime {
+    color: var(--accent-yellow);
+    text-align: right;
+    font-size: 9px;
+}
+
+.agent-cost-daily {
+    color: var(--text-secondary);
+    font-style: italic;
+    text-align: right;
+    font-size: 9px;
 }

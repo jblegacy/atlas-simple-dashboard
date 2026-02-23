@@ -35,13 +35,17 @@ const CONFIG_DIR = path.join(__dirname, 'config');
 const CONFIG_FILE = path.join(CONFIG_DIR, 'anthropic.json');
 const TASKS_FILE = path.join(CONFIG_DIR, 'tasks.json');
 const MODEL_HISTORY_FILE = path.join(CONFIG_DIR, 'model-history.json');
+const AGENTS_CONFIG_FILE = path.join(CONFIG_DIR, 'agents.json');
 
-// Agent configuration with colors
-const AGENT_CONFIG = {
+// Default agent configuration with colors
+const DEFAULT_AGENT_CONFIG = {
     'atlas': { name: 'Atlas', color: '#4ec9b0', bg: 'rgba(78, 201, 176, 0.1)' },
     'nate': { name: 'Nate', color: '#d4534f', bg: 'rgba(212, 83, 79, 0.1)' },
     'alex': { name: 'Alex', color: '#6a9955', bg: 'rgba(106, 153, 85, 0.1)' }
 };
+
+// Dynamic AGENT_CONFIG (merges defaults with configured agents)
+let AGENT_CONFIG = { ...DEFAULT_AGENT_CONFIG };
 
 // Ensure config directory exists (still needed for anthropic.json)
 if (!fs.existsSync(CONFIG_DIR)) {
@@ -70,6 +74,69 @@ function saveConfig(config) {
         console.log('⚠️  Error saving config file:', error.message);
     }
 }
+
+// ─── Agents Config (multi-agent API key management) ─────────────────────────
+let agentsConfig = { adminApiKey: null, agents: [] };
+let apiKeyIdToAgent = new Map();
+
+function loadAgentsConfig() {
+    try {
+        if (fs.existsSync(AGENTS_CONFIG_FILE)) {
+            const config = JSON.parse(fs.readFileSync(AGENTS_CONFIG_FILE, 'utf8'));
+            console.log(`✅ Loaded agents config: ${(config.agents || []).length} agents, admin key: ${config.adminApiKey ? 'set' : 'not set'}`);
+            return config;
+        }
+    } catch (error) {
+        console.log('⚠️  Error loading agents config:', error.message);
+    }
+    return { adminApiKey: null, agents: [] };
+}
+
+function saveAgentsConfig(config) {
+    try {
+        fs.writeFileSync(AGENTS_CONFIG_FILE, JSON.stringify(config, null, 2));
+        console.log('✅ Saved agents config to file');
+    } catch (error) {
+        console.log('⚠️  Error saving agents config:', error.message);
+    }
+}
+
+function rebuildApiKeyIdMap() {
+    apiKeyIdToAgent = new Map();
+    (agentsConfig.agents || []).forEach(agent => {
+        apiKeyIdToAgent.set(agent.apiKeyId, agent);
+    });
+    // Also rebuild dynamic AGENT_CONFIG
+    AGENT_CONFIG = { ...DEFAULT_AGENT_CONFIG };
+    (agentsConfig.agents || []).forEach(agent => {
+        const slug = agent.slug || agent.name.toLowerCase();
+        if (!AGENT_CONFIG[slug]) {
+            const color = agent.color || '#007acc';
+            AGENT_CONFIG[slug] = {
+                name: agent.name,
+                color: color,
+                bg: `rgba(${hexToRgb(color)}, 0.1)`
+            };
+        }
+    });
+    console.log(`🔑 API key map rebuilt: ${apiKeyIdToAgent.size} agents mapped`);
+}
+
+function hexToRgb(hex) {
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    return result
+        ? `${parseInt(result[1], 16)}, ${parseInt(result[2], 16)}, ${parseInt(result[3], 16)}`
+        : '0, 122, 204';
+}
+
+function getEffectiveApiKey() {
+    // Prefer admin key from agents config, fall back to legacy API key
+    return agentsConfig.adminApiKey || process.env.ANTHROPIC_API_KEY;
+}
+
+// Load agents config on startup
+agentsConfig = loadAgentsConfig();
+rebuildApiKeyIdMap();
 
 // ─── Legacy file-based functions (fallback when Supabase unavailable) ───────
 function loadTasksFromFile() {
@@ -516,10 +583,12 @@ function calculateCost(inputTokens, outputTokens, modelName) {
 }
 
 // Extract and breakdown tokens/cost by day from API response
-function extractDailyBreakdown(usageData) {
+// When groupByAgent=true, also accumulates per-agent breakdowns using api_key_id
+function extractDailyBreakdown(usageData, groupByAgent = false) {
     const dailyBreakdown = [];
     let totalTokens = 0;
     let totalCost = 0;
+    const perAgent = {}; // apiKeyId -> { tokens, cost, dailyCosts: { date -> cost } }
 
     console.log(`   🔍 DEBUG: usageData.data exists? ${!!usageData.data}, length: ${usageData.data?.length || 0}`);
 
@@ -543,7 +612,21 @@ function extractDailyBreakdown(usageData) {
                     totalTokens += dayTokens;
                     totalCost += dayCost;
 
-                    console.log(`   🔍 DEBUG: Bucket ${idx} (${bucket.starting_at}): ${dayTokens} tokens (in:${inputTokens} out:${outputTokens}) = $${dayCost.toFixed(4)}${result.model ? ' [' + result.model + ']' : ''}`);
+                    console.log(`   🔍 DEBUG: Bucket ${idx} (${bucket.starting_at}): ${dayTokens} tokens (in:${inputTokens} out:${outputTokens}) = $${dayCost.toFixed(4)}${result.model ? ' [' + result.model + ']' : ''}${result.api_key_id ? ' key:' + result.api_key_id.slice(-8) : ''}`);
+
+                    // Per-agent accumulation when grouping by api_key_id
+                    if (groupByAgent && result.api_key_id) {
+                        const keyId = result.api_key_id;
+                        if (!perAgent[keyId]) {
+                            perAgent[keyId] = { tokens: 0, cost: 0, dailyCosts: {} };
+                        }
+                        perAgent[keyId].tokens += dayTokens;
+                        perAgent[keyId].cost += dayCost;
+
+                        const date = bucket.starting_at.split('T')[0];
+                        perAgent[keyId].dailyCosts[date] =
+                            (perAgent[keyId].dailyCosts[date] || 0) + dayCost;
+                    }
 
                     if (dayTokens > 0) { // Only log days with usage
                         dailyBreakdown.push({
@@ -553,7 +636,8 @@ function extractDailyBreakdown(usageData) {
                             uncached_input: result.uncached_input_tokens || 0,
                             cache_read: result.cache_read_input_tokens || 0,
                             output: result.output_tokens || 0,
-                            model: result.model || null
+                            model: result.model || null,
+                            api_key_id: result.api_key_id || null
                         });
                     }
                 });
@@ -562,9 +646,12 @@ function extractDailyBreakdown(usageData) {
 
         console.log(`   🔍 DEBUG: Buckets with results: ${bucketsWithResults}, without: ${bucketsWithoutResults}`);
         console.log(`   🔍 DEBUG: Total extracted: ${totalTokens} tokens = $${totalCost.toFixed(4)}`);
+        if (groupByAgent && Object.keys(perAgent).length > 0) {
+            console.log(`   🔍 DEBUG: Per-agent keys found: ${Object.keys(perAgent).length}`);
+        }
     }
 
-    return { dailyBreakdown, totalTokens, totalCost };
+    return { dailyBreakdown, totalTokens, totalCost, perAgent };
 }
 
 // Extract total tokens from API response (legacy function)
@@ -574,9 +661,9 @@ function extractTokensFromResponse(usageData) {
 }
 
 // Get today's usage (minute-by-minute, updates every minute)
-function fetchTodaysUsage() {
+function fetchTodaysUsage(groupByAgent = false) {
     return new Promise((resolve) => {
-        const apiKey = process.env.ANTHROPIC_API_KEY;
+        const apiKey = getEffectiveApiKey();
 
         if (!apiKey) {
             resolve(null);
@@ -599,7 +686,17 @@ function fetchTodaysUsage() {
             url.searchParams.append('bucket_width', '1m');
             url.searchParams.append('group_by[]', 'model');
 
-            console.log('📊 Fetching today\'s usage (minute buckets, grouped by model)...');
+            // When agents are configured, also group by api_key_id for per-agent tracking
+            if (groupByAgent) {
+                url.searchParams.append('group_by[]', 'api_key_id');
+                // Filter to only configured agent keys
+                agentsConfig.agents.forEach(a => {
+                    url.searchParams.append('api_key_ids[]', a.apiKeyId);
+                });
+                console.log('📊 Fetching today\'s usage (minute buckets, grouped by model + api_key_id)...');
+            } else {
+                console.log('📊 Fetching today\'s usage (minute buckets, grouped by model)...');
+            }
 
             const curlCmd = `curl -s -X GET "${url.toString()}" \
               -H "anthropic-version: 2023-06-01" \
@@ -641,19 +738,20 @@ function fetchTodaysUsage() {
                         dataLength: usageData.data?.length
                     });
 
-                    const { dailyBreakdown, totalTokens, totalCost: cost } = extractDailyBreakdown(usageData);
+                    const { dailyBreakdown, totalTokens, totalCost: cost, perAgent } = extractDailyBreakdown(usageData, groupByAgent);
 
                     if (dailyBreakdown.length > 0) {
                         console.log('✅ Today\'s usage (minute buckets):', {
                             totalTokens: totalTokens.toLocaleString(),
                             cost: cost.toFixed(4),
-                            minutes: dailyBreakdown.length
+                            minutes: dailyBreakdown.length,
+                            agentKeys: groupByAgent ? Object.keys(perAgent).length : 'N/A'
                         });
                     } else {
                         console.log('✅ Today\'s usage: 0 tokens, $0.00 (no usage yet)');
                     }
 
-                    resolve({ totalTokens, cost });
+                    resolve({ totalTokens, cost, perAgent });
                 } catch (parseError) {
                     console.log('⚠️  Error parsing today\'s usage:', parseError.message);
                     resolve(null);
@@ -667,9 +765,9 @@ function fetchTodaysUsage() {
 }
 
 // Get all-time costs (token-based calculation with per-model pricing)
-function fetchAllTimeCosts(nextPage = null) {
+function fetchAllTimeCosts(nextPage = null, groupByAgent = false, accumulatedPerAgent = null) {
     return new Promise((resolve) => {
-        const apiKey = process.env.ANTHROPIC_API_KEY;
+        const apiKey = getEffectiveApiKey();
 
         if (!apiKey) {
             resolve(null);
@@ -695,11 +793,19 @@ function fetchAllTimeCosts(nextPage = null) {
             url.searchParams.append('limit', '31');
             url.searchParams.append('group_by[]', 'model');
 
+            // When agents are configured, also group by api_key_id
+            if (groupByAgent) {
+                url.searchParams.append('group_by[]', 'api_key_id');
+                agentsConfig.agents.forEach(a => {
+                    url.searchParams.append('api_key_ids[]', a.apiKeyId);
+                });
+            }
+
             if (nextPage) {
                 url.searchParams.append('page', nextPage);
             }
 
-            console.log(`📊 Fetching all-time usage (2026-01-01 through yesterday)${nextPage ? ' (page: ' + nextPage + ')' : ''}...`);
+            console.log(`📊 Fetching all-time usage (2026-01-01 through yesterday)${nextPage ? ' (page: ' + nextPage + ')' : ''}${groupByAgent ? ' [per-agent]' : ''}...`);
             console.log(`   Date range: ${startingAt} to ${endingAt}`);
 
             const curlCmd = `curl -s -X GET "${url.toString()}" \
@@ -743,7 +849,23 @@ function fetchAllTimeCosts(nextPage = null) {
                         dataLength: usageData.data?.length
                     });
 
-                    const { dailyBreakdown, totalTokens: pageTokens, totalCost: pageCost } = extractDailyBreakdown(usageData);
+                    const { dailyBreakdown, totalTokens: pageTokens, totalCost: pageCost, perAgent: pagePerAgent } = extractDailyBreakdown(usageData, groupByAgent);
+
+                    // Merge per-agent data across pages
+                    const mergedPerAgent = accumulatedPerAgent || {};
+                    if (groupByAgent) {
+                        Object.entries(pagePerAgent).forEach(([keyId, data]) => {
+                            if (!mergedPerAgent[keyId]) {
+                                mergedPerAgent[keyId] = { tokens: 0, cost: 0, dailyCosts: {} };
+                            }
+                            mergedPerAgent[keyId].tokens += data.tokens;
+                            mergedPerAgent[keyId].cost += data.cost;
+                            Object.entries(data.dailyCosts).forEach(([date, cost]) => {
+                                mergedPerAgent[keyId].dailyCosts[date] =
+                                    (mergedPerAgent[keyId].dailyCosts[date] || 0) + cost;
+                            });
+                        });
+                    }
 
                     console.log(`   API returned ${usageData.data?.length || 0} buckets`);
 
@@ -768,7 +890,7 @@ function fetchAllTimeCosts(nextPage = null) {
 
                     if (usageData.has_more && usageData.next_page) {
                         console.log(`📄 Paginating all-time usage (next_page: ${usageData.next_page})...`);
-                        fetchAllTimeCosts(usageData.next_page).then((nextPageData) => {
+                        fetchAllTimeCosts(usageData.next_page, groupByAgent, mergedPerAgent).then((nextPageData) => {
                             if (nextPageData) {
                                 const totalTokens = pageTokens + nextPageData.totalTokens;
                                 const cost = pageCost + nextPageData.cost;
@@ -779,7 +901,7 @@ function fetchAllTimeCosts(nextPage = null) {
                                     pages: 'multiple'
                                 });
 
-                                resolve({ totalTokens, cost });
+                                resolve({ totalTokens, cost, perAgent: nextPageData.perAgent || mergedPerAgent });
                             }
                         });
                     } else {
@@ -787,10 +909,11 @@ function fetchAllTimeCosts(nextPage = null) {
                             tokens: pageTokens.toLocaleString(),
                             cost: pageCost.toFixed(2),
                             days: dailyBreakdown.length,
-                            hasMore: usageData.has_more
+                            hasMore: usageData.has_more,
+                            agentKeys: groupByAgent ? Object.keys(mergedPerAgent).length : 'N/A'
                         });
 
-                        resolve({ totalTokens: pageTokens, cost: pageCost });
+                        resolve({ totalTokens: pageTokens, cost: pageCost, perAgent: mergedPerAgent });
                     }
                 } catch (parseError) {
                     console.log('⚠️  Error parsing all-time usage:', parseError.message);
@@ -937,6 +1060,10 @@ wss.on('connection', (ws) => {
       modelUsagePercents: getModelUsagePercents(),
       agentCosts: getAgentCosts(),
       agentConfig: AGENT_CONFIG,
+      agentsConfigured: agentsConfig.agents.length > 0,
+      agentsList: (agentsConfig.agents || []).map(a => ({
+        name: a.name, slug: a.slug, color: a.color, apiKeyId: a.apiKeyId
+      })),
       gatewayStatus: 'connected',
       supabaseStatus: supabaseReady ? 'connected' : 'disconnected',
       apiStatus: {
@@ -1179,8 +1306,10 @@ async function updateTokenMetrics() {
 
   console.log('🔄 Updating cost metrics from Anthropic APIs...');
 
-  const todaysData = await fetchTodaysUsage();
-  const allTimeCosts = await fetchAllTimeCosts();
+  const hasAgents = agentsConfig.agents && agentsConfig.agents.length > 0;
+
+  const todaysData = await fetchTodaysUsage(hasAgents);
+  const allTimeCosts = await fetchAllTimeCosts(null, hasAgents);
 
   if (todaysData) {
     tokenMetrics.today = {
@@ -1191,6 +1320,41 @@ async function updateTokenMetrics() {
 
   if (allTimeCosts) {
     tokenMetrics.allTime.total.cost = allTimeCosts.cost;
+  }
+
+  // Per-agent cost tracking
+  if (hasAgents && (todaysData || allTimeCosts)) {
+    const agentBreakdown = {};
+
+    agentsConfig.agents.forEach(agent => {
+      const keyId = agent.apiKeyId;
+      const todayAgentData = todaysData?.perAgent?.[keyId];
+      const allTimeAgentData = allTimeCosts?.perAgent?.[keyId];
+
+      // Calculate estimated daily from 7-day rolling average
+      const dailyCosts = allTimeAgentData?.dailyCosts || {};
+      const costValues = Object.values(dailyCosts);
+      const daysCount = Math.min(costValues.length, 7);
+      const recentCosts = costValues.slice(-daysCount);
+      const estimatedDaily = daysCount > 0
+        ? recentCosts.reduce((a, b) => a + b, 0) / daysCount
+        : 0;
+
+      const slug = agent.slug || agent.name.toLowerCase();
+      agentBreakdown[slug] = {
+        name: agent.name,
+        color: agent.color || AGENT_CONFIG[slug]?.color || '#007acc',
+        today: todayAgentData?.cost || 0,
+        allTime: (allTimeAgentData?.cost || 0) + (todayAgentData?.cost || 0),
+        estimatedDaily: estimatedDaily,
+        todayTokens: todayAgentData?.tokens || 0
+      };
+    });
+
+    tokenMetrics.perAgent = agentBreakdown;
+    console.log('👥 Per-agent costs:', Object.entries(agentBreakdown).map(([slug, d]) =>
+      `${d.name}: today=$${d.today.toFixed(4)}, allTime=$${d.allTime.toFixed(2)}, est=$${d.estimatedDaily.toFixed(2)}/d`
+    ).join(', '));
   }
 
   if (todaysData && allTimeCosts) {
@@ -1392,6 +1556,150 @@ app.get('/api/anthropic/config', (req, res) => {
     endpoint: process.env.ANTHROPIC_API_ENDPOINT || 'https://api.anthropic.com/v1/usage',
     apiKeySet: isConfigured
   });
+});
+
+// ─── Agent Configuration API (Multi-Agent Key Management) ────────────────────
+
+// Get current agents configuration
+app.get('/api/agents/config', (req, res) => {
+    const masked = agentsConfig.adminApiKey
+        ? '****' + agentsConfig.adminApiKey.slice(-8)
+        : null;
+
+    res.json({
+        adminKeySet: !!agentsConfig.adminApiKey,
+        adminKeyMasked: masked,
+        agents: (agentsConfig.agents || []).map(a => ({
+            name: a.name,
+            slug: a.slug,
+            apiKeyId: a.apiKeyId,
+            color: a.color,
+            addedAt: a.addedAt
+        }))
+    });
+});
+
+// Save admin key and/or full agents list
+app.post('/api/agents/configure', (req, res) => {
+    const { adminApiKey, agents } = req.body;
+
+    if (adminApiKey) {
+        agentsConfig.adminApiKey = adminApiKey;
+        // Also set as legacy API key for backward compat
+        process.env.ANTHROPIC_API_KEY = adminApiKey;
+        console.log('✅ Admin API key updated');
+    }
+
+    if (agents && Array.isArray(agents)) {
+        agentsConfig.agents = agents.map(a => ({
+            name: a.name,
+            slug: (a.slug || a.name.toLowerCase()).replace(/[^a-z0-9]/g, ''),
+            apiKeyId: a.apiKeyId,
+            color: a.color || DEFAULT_AGENT_CONFIG[a.name?.toLowerCase()]?.color || '#007acc',
+            addedAt: a.addedAt || new Date().toISOString()
+        }));
+    }
+
+    saveAgentsConfig(agentsConfig);
+    rebuildApiKeyIdMap();
+
+    // Broadcast updated agent config
+    broadcast({
+        type: 'agentConfigUpdate',
+        data: {
+            agentConfig: AGENT_CONFIG,
+            agentCount: agentsConfig.agents.length
+        }
+    });
+
+    // Trigger immediate cost refresh
+    setTimeout(updateTokenMetrics, 2000);
+
+    res.json({ success: true, agentCount: agentsConfig.agents.length });
+});
+
+// Add a single agent
+app.post('/api/agents/add', (req, res) => {
+    const { name, apiKeyId, color } = req.body;
+
+    if (!name || !apiKeyId) {
+        return res.status(400).json({ error: 'name and apiKeyId are required' });
+    }
+
+    // Check for duplicate
+    if (agentsConfig.agents.find(a => a.apiKeyId === apiKeyId)) {
+        return res.status(409).json({ error: 'Agent with this API key ID already exists' });
+    }
+
+    const slug = name.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const agent = {
+        name,
+        slug,
+        apiKeyId,
+        color: color || DEFAULT_AGENT_CONFIG[slug]?.color || '#007acc',
+        addedAt: new Date().toISOString()
+    };
+
+    agentsConfig.agents.push(agent);
+    saveAgentsConfig(agentsConfig);
+    rebuildApiKeyIdMap();
+
+    console.log(`✅ Agent added: ${name} (key: ${apiKeyId.slice(0, 12)}...)`);
+
+    // Trigger cost refresh
+    setTimeout(updateTokenMetrics, 2000);
+
+    res.json({ success: true, agent });
+});
+
+// Remove an agent by apiKeyId
+app.post('/api/agents/remove', (req, res) => {
+    const { apiKeyId } = req.body;
+    const idx = agentsConfig.agents.findIndex(a => a.apiKeyId === apiKeyId);
+
+    if (idx === -1) {
+        return res.status(404).json({ error: 'Agent not found' });
+    }
+
+    const removed = agentsConfig.agents.splice(idx, 1)[0];
+    saveAgentsConfig(agentsConfig);
+    rebuildApiKeyIdMap();
+
+    console.log(`✅ Agent removed: ${removed.name}`);
+
+    res.json({ success: true, removed });
+});
+
+// Lookup org API keys via Anthropic Admin API
+app.get('/api/agents/list-org-keys', (req, res) => {
+    const adminKey = agentsConfig.adminApiKey;
+    if (!adminKey) {
+        return res.status(400).json({ error: 'Admin API key not configured' });
+    }
+
+    exec(`curl -s -X GET "https://api.anthropic.com/v1/organizations/api_keys" \
+        -H "anthropic-version: 2023-06-01" \
+        -H "x-api-key: ${adminKey}"`, (error, stdout) => {
+        if (error) {
+            return res.status(500).json({ error: 'Failed to fetch org keys' });
+        }
+        try {
+            const data = JSON.parse(stdout);
+            if (data.error) {
+                return res.status(400).json({ error: data.error.message || 'API error' });
+            }
+            // Return only ID and name (never expose full key values)
+            const keys = (data.data || []).map(k => ({
+                id: k.id,
+                name: k.name,
+                status: k.status,
+                created_at: k.created_at
+            }));
+            res.json({ success: true, keys });
+        } catch (e) {
+            res.status(500).json({ error: 'Failed to parse response' });
+        }
+    });
 });
 
 // ─── Task Management API (Supabase-backed) ──────────────────────────────────
