@@ -405,10 +405,19 @@ function handleMessage(data) {
             break;
         case 'agentActivity':
             updateAgentActivityDisplay(data.data);
+            // Also refresh tracked agents chips with heartbeat status
+            if (window.agentsList) {
+                updateTrackedAgentsDisplay(window.agentsList, data.data);
+            }
             break;
         case 'agentConfigUpdate':
             if (data.data.agentConfig) {
                 window.agentConfig = data.data.agentConfig;
+            }
+            // Refresh tracked agents display when agents are added/removed
+            if (data.data.agentsList) {
+                window.agentsList = data.data.agentsList;
+                updateTrackedAgentsDisplay(data.data.agentsList);
             }
             break;
     }
@@ -449,9 +458,10 @@ function updateAllData(data) {
         window.agentConfig = data.agentConfig;
     }
 
-    // Store agents list for modal
+    // Store agents list for modal and update tracked agents display
     if (data.agentsList) {
         window.agentsList = data.agentsList;
+        updateTrackedAgentsDisplay(data.agentsList, data.agentHeartbeats);
     }
 
     // Agent heartbeats (Feature 2)
@@ -826,6 +836,43 @@ function updateAgentName(projectInfo) {
     if (pageTitle) {
         pageTitle.textContent = `${agentName} - System Stats & OpenClaw Monitor`;
     }
+}
+
+// Update tracked agents display in header (shows all configured agents)
+function updateTrackedAgentsDisplay(agentsList, heartbeats) {
+    const el = document.getElementById('tracked-agents');
+    if (!el) return;
+
+    if (!agentsList || agentsList.length === 0) {
+        el.innerHTML = '';
+        return;
+    }
+
+    // Store heartbeats reference for live updates
+    if (heartbeats) {
+        window._lastHeartbeats = heartbeats;
+    }
+    const hb = window._lastHeartbeats || {};
+
+    let html = '<span class="tracked-agents-label">Tracking:</span>';
+    agentsList.forEach(agent => {
+        const slug = agent.slug || agent.name.toLowerCase();
+        const color = agent.color || window.agentConfig?.[slug]?.color || '#007acc';
+        const heartbeat = hb[slug];
+        const hasHeartbeat = heartbeat && heartbeat.status === 'active';
+        const statusTitle = heartbeat
+            ? `${heartbeat.status}${heartbeat.currentTask ? ' — ' + heartbeat.currentTask : ''}`
+            : 'No heartbeat';
+
+        html += `
+            <div class="tracked-agent-chip ${hasHeartbeat ? 'has-heartbeat' : ''}" title="${escapeHtml(statusTitle)}">
+                <span class="agent-dot" style="background: ${color};"></span>
+                <span class="agent-chip-name">${escapeHtml(agent.name)}</span>
+            </div>
+        `;
+    });
+
+    el.innerHTML = html;
 }
 
 // Update live logs display - newest at top, waterfall down

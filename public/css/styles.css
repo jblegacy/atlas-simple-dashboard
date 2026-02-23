@@ -101,6 +101,62 @@ body {
     letter-spacing: 0.5px;
 }
 
+/* Tracked Agents Roster */
+.tracked-agents {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: clamp(4px, 0.8vmin, 8px) clamp(6px, 1vmin, 12px);
+    background-color: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    font-size: clamp(10px, 1.1vmin, 13px);
+}
+
+.tracked-agents:empty {
+    display: none;
+}
+
+.tracked-agents-label {
+    color: var(--text-secondary);
+    font-weight: 600;
+    font-size: 10px;
+    margin-right: 2px;
+}
+
+.tracked-agent-chip {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    font-size: 10px;
+    font-weight: 600;
+    transition: all 0.2s;
+    white-space: nowrap;
+}
+
+.tracked-agent-chip:hover {
+    background-color: var(--bg-primary);
+}
+
+.tracked-agent-chip .agent-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.tracked-agent-chip .agent-chip-name {
+    color: var(--text-primary);
+}
+
+.tracked-agent-chip.has-heartbeat .agent-dot {
+    animation: pulse 1.5s infinite;
+}
+
 .connection-status-header {
     display: flex;
     align-items: center;

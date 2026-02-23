@@ -1949,12 +1949,15 @@ app.post('/api/agents/configure', (req, res) => {
     saveAgentsConfig(agentsConfig);
     rebuildApiKeyIdMap();
 
-    // Broadcast updated agent config
+    // Broadcast updated agent config (include agentsList for header roster)
     broadcast({
         type: 'agentConfigUpdate',
         data: {
             agentConfig: AGENT_CONFIG,
-            agentCount: agentsConfig.agents.length
+            agentCount: agentsConfig.agents.length,
+            agentsList: (agentsConfig.agents || []).map(a => ({
+                name: a.name, slug: a.slug, color: a.color, apiKeyId: a.apiKeyId
+            }))
         }
     });
 
