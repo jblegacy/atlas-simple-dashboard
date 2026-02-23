@@ -4,12 +4,20 @@ let reconnectAttempts = 0;
 const maxReconnectAttempts = 5;
 let allTasks = [];
 let currentTab = 'ACTIVE';
+let lastMetricsUpdate = null;
+let lastSuccessfulApiTime = null;
+
+// Log filter state (Feature 10)
+let allLogs = [];
+let logSearchText = '';
+let logLevelFilters = { info: true, warning: true, error: true, debug: true };
 
 // Initialize dashboard
 document.addEventListener('DOMContentLoaded', () => {
     connectWebSocket();
     setupTabButtons();
     setupApiModal();
+    setupLogFilters();
     checkApiStatus();
 });
 
@@ -274,31 +282,41 @@ async function checkApiStatus() {
         console.log('📡 API Status:', config);
         
         if (config.apiKeySet) {
-            updateApiStatus(true);
+            updateApiStatus('active');
         } else {
-            updateApiStatus(false);
+            updateApiStatus('unconfigured');
         }
     } catch (error) {
         console.error('Error checking API status:', error);
-        updateApiStatus(false);
+        updateApiStatus('error');
     }
 }
 
-// Update API status indicator
-function updateApiStatus(isActive) {
+// Update API status indicator (3-state: active/unconfigured/error)
+function updateApiStatus(state) {
     const apiStatus = document.getElementById('api-status');
     const setupBtn = document.getElementById('api-setup-btn');
     const statusSpan = apiStatus?.querySelector('span');
-    
-    if (isActive) {
+
+    // Normalize legacy boolean values
+    if (state === true) state = 'active';
+    else if (state === false) state = 'unconfigured';
+
+    if (apiStatus) apiStatus.classList.remove('active', 'unconfigured');
+
+    if (state === 'active') {
         console.log('✅ API is now ACTIVE');
         if (apiStatus) apiStatus.classList.add('active');
         if (statusSpan) statusSpan.textContent = 'API Active';
         if (setupBtn) setupBtn.style.display = 'none';
+    } else if (state === 'unconfigured') {
+        console.log('⚙️  API is NOT CONFIGURED');
+        if (apiStatus) apiStatus.classList.add('unconfigured');
+        if (statusSpan) statusSpan.textContent = 'API Not Set';
+        if (setupBtn) setupBtn.style.display = 'block';
     } else {
-        console.log('⚠️  API is INACTIVE');
-        if (apiStatus) apiStatus.classList.remove('active');
-        if (statusSpan) statusSpan.textContent = 'API Inactive';
+        console.log('⚠️  API ERROR');
+        if (statusSpan) statusSpan.textContent = 'API Error';
         if (setupBtn) setupBtn.style.display = 'block';
     }
 }
@@ -385,6 +403,9 @@ function handleMessage(data) {
         case 'apiStatus':
             updateApiStatus(data.data.apiKeySet);
             break;
+        case 'agentActivity':
+            updateAgentActivityDisplay(data.data);
+            break;
         case 'agentConfigUpdate':
             if (data.data.agentConfig) {
                 window.agentConfig = data.data.agentConfig;
@@ -408,6 +429,7 @@ function updateAllData(data) {
     }
     
     updateModelDisplay(data.currentModel);
+    window.projectInfo = data.projectInfo;
     updateProjectInfo(data.projectInfo);
     updateAgentName(data.projectInfo);
     updateLiveLogsDisplay(data.liveLogs);
@@ -430,6 +452,11 @@ function updateAllData(data) {
     // Store agents list for modal
     if (data.agentsList) {
         window.agentsList = data.agentsList;
+    }
+
+    // Agent heartbeats (Feature 2)
+    if (data.agentHeartbeats) {
+        updateAgentActivityDisplay(data.agentHeartbeats);
     }
     
     // Check API status if provided
@@ -545,10 +572,11 @@ function updateQueueStatus() {
         task.status === 'ACTIVE' || task.status === 'IN_PROGRESS'
     );
     
+    const agentDisplayName = window.projectInfo?.agentName || 'Agent';
     if (hasActiveTasks) {
-        statusEl.textContent = 'Atlas thinking...';
+        statusEl.textContent = `${agentDisplayName} thinking...`;
     } else {
-        statusEl.textContent = 'Atlas resting';
+        statusEl.textContent = `${agentDisplayName} resting`;
     }
 }
 
@@ -589,6 +617,16 @@ function filterAndRenderWorkQueue() {
             }
         }
         
+        // Feature 11: Task duration
+        let durationHtml = '';
+        if (item.completedAt && item.startedAt) {
+            const dur = new Date(item.completedAt) - new Date(item.startedAt);
+            durationHtml = `<span class="task-duration">Took ${formatDuration(dur)}</span>`;
+        } else if (item.startedAt && ['ACTIVE', 'IN_PROGRESS'].includes(item.status)) {
+            const dur = Date.now() - new Date(item.startedAt).getTime();
+            durationHtml = `<span class="task-duration running">Running ${formatDuration(dur)}</span>`;
+        }
+
         html += `
             <div class="work-item ${agentClass}">
                 ${agentBadge}
@@ -601,6 +639,7 @@ function filterAndRenderWorkQueue() {
                 ` : ''}
                 <div class="work-status">
                     <span class="status-badge ${statusClass}">${item.status}</span>
+                    ${durationHtml}
                     <span>${item.eta}</span>
                 </div>
             </div>
@@ -786,29 +825,12 @@ function updateAgentName(projectInfo) {
 // Update live logs display - newest at top, waterfall down
 function updateLiveLogsDisplay(logs) {
     if (!logs) return;
-    
-    const logDiv = document.getElementById('live-logs');
-    if (!logDiv) return;
-    
-    // Build log entries
-    let html = '';
-    if (logs && logs.length > 0) {
-        logs.forEach(log => {
-            html += `
-                <div class="log-entry ${log.level}">
-                    <span class="log-timestamp">${new Date(log.timestamp).toLocaleTimeString()}</span>
-                    ${escapeHtml(log.message)}
-                </div>
-            `;
-        });
-    } else {
-        html = '<div class="loading">No recent activity</div>';
-    }
-    
-    // Use smooth update instead of hard reset
-    if (logDiv.innerHTML !== html) {
-        smoothSetHTML(logDiv, html);
-    }
+
+    // Store logs globally for filtering (Feature 10)
+    allLogs = logs;
+
+    // Use filter-aware rendering
+    filterAndRenderLogs();
 }
 
 // Update gateway connection status in header
@@ -842,7 +864,36 @@ function updateTokenMetricsDisplay(metrics) {
         const yesterdayTotal = metrics.allTime.total?.cost || 0;
         const todayTotal = metrics.today.cost || 0;
         const allTimeTotal = yesterdayTotal + todayTotal;
-        alltimeCost.textContent = `All-Time: $${allTimeTotal.toFixed(2)}`;
+        const cacheStr = metrics.cacheHitRate !== undefined ? ` | Cache: ${metrics.cacheHitRate}%` : '';
+        alltimeCost.textContent = `All-Time: $${allTimeTotal.toFixed(2)}${cacheStr}`;
+    }
+
+    // Projected monthly cost (Feature 1)
+    const projectedEl = document.getElementById('projected-monthly');
+    if (projectedEl && metrics.projectedMonthly !== undefined) {
+        projectedEl.textContent = `Projected: $${metrics.projectedMonthly.toFixed(2)}/mo`;
+        // Toggle threshold exceeded style
+        const costCard = projectedEl.closest('.stat-card');
+        if (costCard) {
+            costCard.classList.toggle('threshold-exceeded', !!metrics.thresholdExceeded);
+        }
+    }
+
+    // Week-over-week trend (Feature 1)
+    const trendEl = document.getElementById('cost-trend');
+    if (trendEl && metrics.weekOverWeek !== undefined) {
+        const wow = metrics.weekOverWeek;
+        const arrow = wow > 0 ? '↑' : wow < 0 ? '↓' : '→';
+        const absWow = Math.abs(wow).toFixed(1);
+        trendEl.textContent = `WoW: ${arrow} ${absWow}%`;
+        trendEl.className = 'cost-trend';
+        if (wow > 5) trendEl.classList.add('trend-up');
+        else if (wow < -5) trendEl.classList.add('trend-down');
+    }
+
+    // Cost history chart (Feature 4)
+    if (metrics.dailyCostHistory && metrics.dailyCostHistory.length > 0) {
+        updateCostChart(metrics.dailyCostHistory);
     }
 
     // Per-agent cost breakdown (from Usage Report API group_by api_key_id)
@@ -854,6 +905,15 @@ function updateTokenMetricsDisplay(metrics) {
     if (metrics.modelBreakdown || metrics.perAgent) {
         updateModelAgentDisplay(metrics);
     }
+
+    // Track last update time (Feature 5) and mark data as fresh (Feature 7)
+    if (metrics.lastUpdated) {
+        lastMetricsUpdate = new Date(metrics.lastUpdated);
+    }
+    lastSuccessfulApiTime = Date.now();
+    document.querySelectorAll('.stat-card.token-alltime, .stat-card.cost-by-bot').forEach(el => {
+        el.classList.remove('stale-data');
+    });
 
     console.log('💰 Token Metrics:', {
         today_live: metrics.today ? `$${metrics.today.cost.toFixed(4)}` : 'N/A',
@@ -928,6 +988,7 @@ function updatePerAgentCostsDisplay(perAgent) {
             <span>today</span>
             <span>all-time</span>
             <span>est/day</span>
+            <span>cache</span>
         </div>
     `;
 
@@ -944,6 +1005,7 @@ function updatePerAgentCostsDisplay(perAgent) {
                 <span class="agent-cost-today">$${(data.today || 0).toFixed(2)}</span>
                 <span class="agent-cost-alltime">$${(data.allTime || 0).toFixed(2)}</span>
                 <span class="agent-cost-daily">~$${(data.estimatedDaily || 0).toFixed(2)}</span>
+                <span class="agent-cost-cache">${data.cacheHitRate || 0}%</span>
             </div>
         `;
     });
@@ -1007,3 +1069,231 @@ setTimeout(() => {
         setupPolling();
     }
 }, 5000);
+
+// Feature 9: CSV Export button handler
+(function setupCsvExport() {
+    const btn = document.getElementById('btn-export-csv');
+    if (btn) {
+        btn.addEventListener('click', () => {
+            window.open('/api/analytics/export-csv', '_blank');
+        });
+    }
+})();
+
+// Feature 11: Format duration helper
+function formatDuration(ms) {
+    if (!ms || ms < 0) return '';
+    const totalMinutes = Math.floor(ms / 60000);
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    if (hours > 0) return `${hours}h ${minutes}m`;
+    return `${minutes}m`;
+}
+
+// Feature 2: Agent Activity Display (heartbeat-based)
+function updateAgentActivityDisplay(activity) {
+    const el = document.getElementById('agent-activity');
+    if (!el) return;
+
+    const agents = Object.entries(activity || {});
+    if (agents.length === 0) {
+        el.innerHTML = '';
+        return;
+    }
+
+    const statusIcons = { active: '●', idle: '○', stale: '◌' };
+    const statusColors = { active: 'var(--accent-green)', idle: 'var(--accent-yellow)', stale: 'var(--status-inactive)' };
+
+    let html = '';
+    agents.forEach(([slug, data]) => {
+        const icon = statusIcons[data.status] || '✖';
+        const color = statusColors[data.status] || 'var(--accent-red)';
+        const name = data.name || slug;
+        const task = data.currentTask ? escapeHtml(data.currentTask) : '';
+
+        html += `
+            <div class="agent-status-row">
+                <span class="agent-status-icon" style="color: ${color};">${icon}</span>
+                <span class="agent-status-name">${escapeHtml(name)}</span>
+                ${task ? `<span class="agent-status-task">${task}</span>` : ''}
+            </div>
+        `;
+    });
+
+    el.innerHTML = html;
+}
+
+// Feature 10: Log Search/Filter Setup
+function setupLogFilters() {
+    const searchInput = document.getElementById('log-search');
+    const levelBtns = document.querySelectorAll('.log-level-btn');
+
+    if (searchInput) {
+        searchInput.addEventListener('input', (e) => {
+            logSearchText = e.target.value.toLowerCase();
+            filterAndRenderLogs();
+        });
+    }
+
+    levelBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            const level = btn.dataset.level;
+            logLevelFilters[level] = !logLevelFilters[level];
+            btn.classList.toggle('active', logLevelFilters[level]);
+            filterAndRenderLogs();
+        });
+    });
+}
+
+// Feature 10: Filter and render logs
+function filterAndRenderLogs() {
+    const logDiv = document.getElementById('live-logs');
+    if (!logDiv) return;
+
+    const filtered = allLogs.filter(log => {
+        // Level filter
+        if (!logLevelFilters[log.level]) return false;
+        // Text search
+        if (logSearchText && !log.message.toLowerCase().includes(logSearchText)) return false;
+        return true;
+    });
+
+    if (filtered.length === 0) {
+        smoothSetHTML(logDiv, '<div class="loading">No matching logs</div>');
+        return;
+    }
+
+    let html = '';
+    filtered.forEach(log => {
+        html += `
+            <div class="log-entry ${log.level}">
+                <span class="log-timestamp">${new Date(log.timestamp).toLocaleTimeString()}</span>
+                ${escapeHtml(log.message)}
+            </div>
+        `;
+    });
+
+    smoothSetHTML(logDiv, html);
+}
+
+// Feature 4: Cost History Chart (Chart.js sparkline)
+let costChartInstance = null;
+function updateCostChart(dailyHistory) {
+    if (!window.Chart) return; // Chart.js not loaded yet
+
+    const canvas = document.getElementById('cost-chart');
+    if (!canvas) return;
+
+    const labels = dailyHistory.map(d => d.date.slice(5)); // "MM-DD"
+    const data = dailyHistory.map(d => d.cost);
+
+    if (costChartInstance) {
+        costChartInstance.data.labels = labels;
+        costChartInstance.data.datasets[0].data = data;
+        costChartInstance.update('none');
+        return;
+    }
+
+    costChartInstance = new Chart(canvas, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [{
+                data: data,
+                backgroundColor: 'rgba(0, 122, 204, 0.6)',
+                borderColor: 'rgba(0, 122, 204, 0.8)',
+                borderWidth: 1,
+                borderRadius: 2,
+                barPercentage: 0.8
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label: (ctx) => `$${ctx.parsed.y.toFixed(2)}`
+                    },
+                    bodyFont: { family: 'JetBrains Mono', size: 10 },
+                    backgroundColor: '#2d2d30',
+                    borderColor: '#3e3e42',
+                    borderWidth: 1
+                }
+            },
+            scales: {
+                x: { display: false },
+                y: { display: false }
+            },
+            animation: false
+        }
+    });
+}
+
+// Feature 1: Settings tab — cost threshold handler
+(function setupSettingsTab() {
+    const saveThresholdBtn = document.getElementById('btn-save-threshold');
+    if (!saveThresholdBtn) return;
+
+    // Load current threshold when modal opens
+    const apiStatus = document.getElementById('api-status');
+    apiStatus?.addEventListener('click', async () => {
+        try {
+            const resp = await fetch('/api/config/cost-threshold');
+            const data = await resp.json();
+            const input = document.getElementById('cost-threshold-input');
+            if (input && data.threshold) {
+                input.value = data.threshold;
+            }
+        } catch (e) { /* ignore */ }
+    });
+
+    saveThresholdBtn.addEventListener('click', async () => {
+        const input = document.getElementById('cost-threshold-input');
+        const statusEl = document.getElementById('threshold-status');
+        const value = input ? input.value.trim() : '';
+
+        try {
+            saveThresholdBtn.disabled = true;
+            saveThresholdBtn.textContent = 'Saving...';
+
+            const resp = await fetch('/api/config/cost-threshold', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ threshold: value ? parseFloat(value) : null })
+            });
+
+            if (resp.ok) {
+                if (statusEl) {
+                    statusEl.innerHTML = `<span style="color: var(--accent-green);">Threshold ${value ? 'set to $' + value : 'cleared'}</span>`;
+                }
+            }
+        } catch (e) {
+            if (statusEl) statusEl.innerHTML = `<span style="color: var(--accent-red);">Error saving threshold</span>`;
+        } finally {
+            saveThresholdBtn.disabled = false;
+            saveThresholdBtn.textContent = 'Save Threshold';
+        }
+    });
+})();
+
+// Feature 5: "Last Updated" timestamp + Feature 7: Stale data indicator
+setInterval(() => {
+    // Update "Metrics: Xs ago" display
+    const el = document.getElementById('metrics-updated-text');
+    if (el && lastMetricsUpdate) {
+        const elapsed = Math.floor((Date.now() - lastMetricsUpdate.getTime()) / 1000);
+        const mins = Math.floor(elapsed / 60);
+        const secs = elapsed % 60;
+        el.textContent = mins > 0 ? `Metrics: ${mins}m ${secs}s ago` : `Metrics: ${secs}s ago`;
+        el.parentElement.classList.toggle('stale-warning', elapsed > 600);
+    }
+
+    // Mark cost cards as stale if no successful API response in 10+ minutes
+    if (lastSuccessfulApiTime && (Date.now() - lastSuccessfulApiTime > 10 * 60 * 1000)) {
+        document.querySelectorAll('.stat-card.token-alltime, .stat-card.cost-by-bot').forEach(el => {
+            el.classList.add('stale-data');
+        });
+    }
+}, 1000);
