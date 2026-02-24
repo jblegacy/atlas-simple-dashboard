@@ -410,6 +410,11 @@ function handleMessage(data) {
                 updateTrackedAgentsDisplay(window.agentsList, data.data);
             }
             break;
+        case 'agentProcessModels':
+            // Real-time process detection: update model badges immediately (no 5min wait)
+            window.agentProcessModels = data.data;
+            updateAgentProcessModelBadges(data.data);
+            break;
         case 'agentConfigUpdate':
             if (data.data.agentConfig) {
                 window.agentConfig = data.data.agentConfig;
@@ -467,6 +472,11 @@ function updateAllData(data) {
     // Agent heartbeats (Feature 2)
     if (data.agentHeartbeats) {
         updateAgentActivityDisplay(data.agentHeartbeats);
+    }
+
+    // Real-time agent process models
+    if (data.agentProcessModels) {
+        window.agentProcessModels = data.agentProcessModels;
     }
     
     // Check API status if provided
@@ -726,7 +736,7 @@ function updateModelDisplay(model) {
     }
 }
 
-// Update combined model + agent display (overall breakdown + per-agent model %)
+// Update combined model + agent display (overall breakdown + per-agent current models)
 function updateModelAgentDisplay(metrics) {
     if (!metrics) return;
 
@@ -746,7 +756,7 @@ function updateModelAgentDisplay(metrics) {
         window._modelBreakdownFromAPI = true;
     }
 
-    // Per-agent model rows
+    // Per-agent model rows — show current active model prominently
     if (perAgentEl && metrics.perAgent) {
         const agents = Object.entries(metrics.perAgent);
         if (agents.length === 0) {
@@ -756,24 +766,56 @@ function updateModelAgentDisplay(metrics) {
 
         let html = '';
         agents.forEach(([slug, data]) => {
-            if (!data.models || Object.keys(data.models).length === 0) return;
-
             const dotColor = data.color || '#007acc';
-            const modelPcts = Object.entries(data.models)
+
+            // Check real-time process detection first (overrides API data for display)
+            const processInfo = (window.agentProcessModels || {})[slug];
+            const currentModel = processInfo?.model || data.currentModel;
+            const currentModelCap = currentModel
+                ? currentModel.charAt(0).toUpperCase() + currentModel.slice(1)
+                : null;
+            const isLive = !!processInfo; // True if detected from running process
+            const modelSource = processInfo ? 'process' : (data.modelSource || null);
+
+            // Build historical model usage percentages as secondary info
+            const modelPcts = Object.entries(data.models || {})
                 .sort((a, b) => b[1] - a[1])
+                .filter(([, pct]) => pct > 0)
                 .map(([model, pct]) => {
                     const cap = model.charAt(0).toUpperCase() + model.slice(1);
                     return `<span class="model-pct-${model}">${cap} ${pct}%</span>`;
                 })
                 .join(' <span style="opacity:0.4">\u00b7</span> ');
 
+            // Determine last active time relative text
+            let lastActiveStr = '';
+            if (isLive) {
+                lastActiveStr = 'live';
+            } else if (data.lastActiveTime) {
+                const elapsed = Date.now() - new Date(data.lastActiveTime).getTime();
+                if (elapsed < 5 * 60 * 1000) lastActiveStr = 'now';
+                else if (elapsed < 60 * 60 * 1000) lastActiveStr = `${Math.round(elapsed / 60000)}m ago`;
+                else if (elapsed < 24 * 60 * 60 * 1000) lastActiveStr = `${Math.round(elapsed / 3600000)}h ago`;
+                else lastActiveStr = `${Math.round(elapsed / 86400000)}d ago`;
+            }
+
             html += `
-                <div class="model-agent-row">
+                <div class="model-agent-row" data-agent-slug="${slug}">
                     <span class="model-agent-name">
-                        <span class="agent-dot" style="background: ${dotColor};"></span>
+                        <span class="agent-dot${isLive ? ' agent-dot-live' : ''}" style="background: ${dotColor};"></span>
                         ${escapeHtml(data.name)}
                     </span>
-                    <span class="model-agent-models">${modelPcts}</span>
+                    <span class="model-agent-current">
+                        ${currentModelCap
+                            ? `<span class="model-badge-inline ${currentModel}${isLive ? ' live' : ''}">${currentModelCap}</span>`
+                            : '<span class="model-badge-inline inactive">Inactive</span>'
+                        }
+                        ${lastActiveStr
+                            ? `<span class="model-agent-last-active${isLive ? ' live' : ''}">${lastActiveStr}</span>`
+                            : ''
+                        }
+                    </span>
+                    ${modelPcts ? `<span class="model-agent-models">${modelPcts}</span>` : ''}
                 </div>
             `;
         });
@@ -784,9 +826,72 @@ function updateModelAgentDisplay(metrics) {
     console.log('📊 Model+Agent Display updated:', {
         modelBreakdown: metrics.modelBreakdown,
         agentModels: metrics.perAgent ? Object.entries(metrics.perAgent).map(([s, d]) =>
-            `${d.name}: ${JSON.stringify(d.models || {})}`
+            `${d.name}: current=${d.currentModel || 'unknown'}(${d.modelSource || 'none'}), models=${JSON.stringify(d.models || {})}`
         ) : 'N/A'
     });
+}
+
+// Real-time process model badge updates (called every ~10s from WebSocket)
+// This avoids a full re-render — just patches the relevant badge elements
+function updateAgentProcessModelBadges(processModels) {
+    if (!processModels) return;
+
+    const perAgentEl = document.getElementById('model-per-agent');
+    if (!perAgentEl) return;
+
+    const rows = perAgentEl.querySelectorAll('.model-agent-row');
+    rows.forEach(row => {
+        const slug = row.getAttribute('data-agent-slug');
+        if (!slug) return;
+
+        const processInfo = processModels[slug];
+        const badge = row.querySelector('.model-badge-inline');
+        const dot = row.querySelector('.agent-dot');
+        const lastActive = row.querySelector('.model-agent-last-active');
+
+        if (processInfo?.model) {
+            // Agent has a running process — update badge to show live model
+            const model = processInfo.model;
+            const modelCap = model.charAt(0).toUpperCase() + model.slice(1);
+
+            if (badge) {
+                badge.className = `model-badge-inline ${model} live`;
+                badge.textContent = modelCap;
+            }
+            if (dot) {
+                dot.classList.add('agent-dot-live');
+            }
+            if (lastActive) {
+                lastActive.textContent = 'live';
+                lastActive.classList.add('live');
+            } else {
+                // Add a "live" span if it doesn't exist
+                const currentSpan = row.querySelector('.model-agent-current');
+                if (currentSpan && !currentSpan.querySelector('.model-agent-last-active')) {
+                    const liveSpan = document.createElement('span');
+                    liveSpan.className = 'model-agent-last-active live';
+                    liveSpan.textContent = 'live';
+                    currentSpan.appendChild(liveSpan);
+                }
+            }
+        } else {
+            // No running process — remove live indicators
+            if (badge) {
+                badge.classList.remove('live');
+            }
+            if (dot) {
+                dot.classList.remove('agent-dot-live');
+            }
+            if (lastActive && lastActive.textContent === 'live') {
+                lastActive.classList.remove('live');
+                lastActive.textContent = '';
+            }
+        }
+    });
+
+    console.log('🔍 Process model badges updated:', Object.entries(processModels)
+        .map(([slug, info]) => `${slug}=${info.model}`)
+        .join(', ') || 'none');
 }
 
 // Update connection status
