@@ -405,10 +405,19 @@ function handleMessage(data) {
             break;
         case 'agentActivity':
             updateAgentActivityDisplay(data.data);
+            // Also refresh tracked agents chips with heartbeat status
+            if (window.agentsList) {
+                updateTrackedAgentsDisplay(window.agentsList, data.data);
+            }
             break;
         case 'agentConfigUpdate':
             if (data.data.agentConfig) {
                 window.agentConfig = data.data.agentConfig;
+            }
+            // Refresh tracked agents display when agents are added/removed
+            if (data.data.agentsList) {
+                window.agentsList = data.data.agentsList;
+                updateTrackedAgentsDisplay(data.data.agentsList);
             }
             break;
     }
@@ -449,9 +458,10 @@ function updateAllData(data) {
         window.agentConfig = data.agentConfig;
     }
 
-    // Store agents list for modal
+    // Store agents list for modal and update tracked agents display
     if (data.agentsList) {
         window.agentsList = data.agentsList;
+        updateTrackedAgentsDisplay(data.agentsList, data.agentHeartbeats);
     }
 
     // Agent heartbeats (Feature 2)
@@ -590,7 +600,13 @@ function filterAndRenderWorkQueue() {
     }
     
     // Filter tasks by current tab
-    const filteredTasks = allTasks.filter(item => item.status === currentTab);
+    // BACKLOG tab also shows QUEUE status (legacy cron jobs)
+    const filteredTasks = allTasks.filter(item => {
+        if (currentTab === 'BACKLOG') {
+            return item.status === 'BACKLOG' || item.status === 'QUEUE';
+        }
+        return item.status === currentTab;
+    });
     
     if (filteredTasks.length === 0) {
         smoothSetHTML(workQueueDiv, `<div class="loading">No ${currentTab.toLowerCase()} tasks</div>`);
@@ -822,6 +838,43 @@ function updateAgentName(projectInfo) {
     }
 }
 
+// Update tracked agents display in header (shows all configured agents)
+function updateTrackedAgentsDisplay(agentsList, heartbeats) {
+    const el = document.getElementById('tracked-agents');
+    if (!el) return;
+
+    if (!agentsList || agentsList.length === 0) {
+        el.innerHTML = '';
+        return;
+    }
+
+    // Store heartbeats reference for live updates
+    if (heartbeats) {
+        window._lastHeartbeats = heartbeats;
+    }
+    const hb = window._lastHeartbeats || {};
+
+    let html = '<span class="tracked-agents-label">Tracking:</span>';
+    agentsList.forEach(agent => {
+        const slug = agent.slug || agent.name.toLowerCase();
+        const color = agent.color || window.agentConfig?.[slug]?.color || '#007acc';
+        const heartbeat = hb[slug];
+        const hasHeartbeat = heartbeat && heartbeat.status === 'active';
+        const statusTitle = heartbeat
+            ? `${heartbeat.status}${heartbeat.currentTask ? ' — ' + heartbeat.currentTask : ''}`
+            : 'No heartbeat';
+
+        html += `
+            <div class="tracked-agent-chip ${hasHeartbeat ? 'has-heartbeat' : ''}" title="${escapeHtml(statusTitle)}">
+                <span class="agent-dot" style="background: ${color};"></span>
+                <span class="agent-chip-name">${escapeHtml(agent.name)}</span>
+            </div>
+        `;
+    });
+
+    el.innerHTML = html;
+}
+
 // Update live logs display - newest at top, waterfall down
 function updateLiveLogsDisplay(logs) {
     if (!logs) return;
@@ -858,14 +911,16 @@ function updateTokenMetricsDisplay(metrics) {
         todayCost.textContent = `$${cost.toFixed(4)}`;
     }
 
-    // All-Time: yesterday (cumulative through yesterday) + today (live)
+    // All-Time: actual billed (Cost API) + today's live estimate (Usage API)
     const alltimeCost = document.getElementById('alltime-cost');
-    if (alltimeCost && metrics.allTime && metrics.today) {
-        const yesterdayTotal = metrics.allTime.total?.cost || 0;
-        const todayTotal = metrics.today.cost || 0;
-        const allTimeTotal = yesterdayTotal + todayTotal;
+    if (alltimeCost && metrics.allTime) {
+        const billedTotal = metrics.allTime.total?.cost || 0;
+        const todayEstimate = metrics.today?.cost || 0;
+        const allTimeTotal = billedTotal + todayEstimate;
+        const isActual = metrics.allTime.total?.source === 'cost_api';
+        const sourceLabel = isActual ? 'Actual' : 'Est';
         const cacheStr = metrics.cacheHitRate !== undefined ? ` | Cache: ${metrics.cacheHitRate}%` : '';
-        alltimeCost.textContent = `All-Time: $${allTimeTotal.toFixed(2)}${cacheStr}`;
+        alltimeCost.textContent = `All-Time (${sourceLabel}): $${allTimeTotal.toFixed(2)}${cacheStr}`;
     }
 
     // Projected monthly cost (Feature 1)
@@ -916,9 +971,10 @@ function updateTokenMetricsDisplay(metrics) {
     });
 
     console.log('💰 Token Metrics:', {
-        today_live: metrics.today ? `$${metrics.today.cost.toFixed(4)}` : 'N/A',
-        yesterday_cumulative: `$${(metrics.allTime.total?.cost || 0).toFixed(2)}`,
-        all_time_total: `$${((metrics.allTime.total?.cost || 0) + (metrics.today?.cost || 0)).toFixed(2)}`,
+        today_live_estimate: metrics.today ? `$${metrics.today.cost.toFixed(4)}` : 'N/A',
+        alltime_billed: `$${(metrics.allTime.total?.cost || 0).toFixed(2)}`,
+        alltime_source: metrics.allTime.total?.source || 'unknown',
+        combined_total: `$${((metrics.allTime.total?.cost || 0) + (metrics.today?.cost || 0)).toFixed(2)}`,
         perAgentKeys: metrics.perAgent ? Object.keys(metrics.perAgent).length : 0
     });
 }
@@ -1297,3 +1353,67 @@ setInterval(() => {
         });
     }
 }, 1000);
+
+// ─── Debug Panel ─────────────────────────────────────────────────────────
+(function setupDebugPanel() {
+    const toggle = document.getElementById('debug-toggle');
+    const content = document.getElementById('debug-content');
+    const arrow = document.getElementById('debug-arrow');
+    if (!toggle || !content) return;
+
+    toggle.addEventListener('click', () => {
+        const isOpen = content.style.display !== 'none';
+        content.style.display = isOpen ? 'none' : 'block';
+        arrow.classList.toggle('open', !isOpen);
+    });
+})();
+
+// Store last debug info for display
+let _debugInfo = {};
+
+function updateDebugDisplay(metrics) {
+    _debugInfo.lastUpdate = new Date().toLocaleTimeString();
+    _debugInfo.costSource = metrics?.allTime?.total?.source || 'unknown';
+    _debugInfo.allTimeCost = metrics?.allTime?.total?.cost?.toFixed(4) || '0';
+    _debugInfo.todayCost = metrics?.today?.cost?.toFixed(4) || '0';
+    _debugInfo.cacheHitRate = metrics?.cacheHitRate || 'N/A';
+    _debugInfo.agentCount = metrics?.perAgent ? Object.keys(metrics.perAgent).length : 0;
+    _debugInfo.modelBreakdown = metrics?.modelBreakdown ? JSON.stringify(metrics.modelBreakdown) : 'N/A';
+    _debugInfo.projected = metrics?.projectedMonthly?.toFixed(2) || 'N/A';
+    _debugInfo.threshold = metrics?.costAlertThreshold || 'none';
+    _debugInfo.dailyHistoryDays = metrics?.dailyCostHistory?.length || 0;
+
+    const el = document.getElementById('debug-output');
+    if (!el) return;
+
+    const src = _debugInfo.costSource === 'cost_api' ? 'ok' : 'warn';
+    el.innerHTML = [
+        `<span class="debug-label">Last Update:</span> ${_debugInfo.lastUpdate}`,
+        `<span class="debug-label">Cost Source:</span> <span class="debug-${src}">${_debugInfo.costSource}</span> ${_debugInfo.costSource === 'cost_api' ? '(actual billed)' : '(token estimate — Cost API may have failed)'}`,
+        `<span class="debug-label">All-Time (from API):</span> $${_debugInfo.allTimeCost}`,
+        `<span class="debug-label">Today Estimate:</span> $${_debugInfo.todayCost}`,
+        `<span class="debug-label">Combined Display:</span> $${(parseFloat(_debugInfo.allTimeCost) + parseFloat(_debugInfo.todayCost)).toFixed(2)}`,
+        `<span class="debug-label">Cache Hit Rate:</span> ${_debugInfo.cacheHitRate}%`,
+        `<span class="debug-label">Agents Tracked:</span> ${_debugInfo.agentCount}`,
+        `<span class="debug-label">Model Split:</span> ${_debugInfo.modelBreakdown}`,
+        `<span class="debug-label">Projected Monthly:</span> $${_debugInfo.projected}`,
+        `<span class="debug-label">Alert Threshold:</span> $${_debugInfo.threshold}`,
+        `<span class="debug-label">Daily History:</span> ${_debugInfo.dailyHistoryDays} days`,
+        `<span class="debug-label">Supabase:</span> ${window._supabaseStatus || 'unknown'}`,
+        `<span class="debug-label">WS State:</span> ${ws ? ['CONNECTING','OPEN','CLOSING','CLOSED'][ws.readyState] : 'null'}`,
+    ].join('\n');
+}
+
+// Hook into updateTokenMetricsDisplay to also update debug
+const _origUpdateTokenMetrics = updateTokenMetricsDisplay;
+updateTokenMetricsDisplay = function(metrics) {
+    _origUpdateTokenMetrics(metrics);
+    updateDebugDisplay(metrics);
+};
+
+// Capture supabase status from initial data
+const _origUpdateAllData = updateAllData;
+updateAllData = function(data) {
+    window._supabaseStatus = data.supabaseStatus || 'unknown';
+    _origUpdateAllData(data);
+};

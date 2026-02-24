@@ -591,15 +591,16 @@ try {
     }
 } catch (e) { /* ignore */ }
 
-// Token costs (per million tokens)
+// Token costs (per million tokens) — updated Feb 2026
+// Cache read = 10% of input price (0.1x multiplier)
 const tokenCosts = {
-    'haiku': { input: 0.80, output: 4.00 },
-    'sonnet': { input: 3.00, output: 15.00 },
-    'opus': { input: 15.00, output: 75.00 }
+    'haiku': { input: 1.00, output: 5.00, cacheRead: 0.10 },
+    'sonnet': { input: 3.00, output: 15.00, cacheRead: 0.30 },
+    'opus': { input: 5.00, output: 25.00, cacheRead: 0.50 }
 };
 
-// Usage API returns tokens only - we calculate cost using token pricing
-// Cost API could return actual USD, but we use token-based calculation for today's usage
+// Usage API returns tokens only - we calculate cost using token pricing for today's live estimate
+// Cost Report API returns actual billed amounts for all-time (24h delay)
 
 // Resolve model name to pricing tier ('haiku', 'sonnet', 'opus')
 function resolveModelTier(modelName) {
@@ -613,16 +614,16 @@ function resolveModelTier(modelName) {
     return 'haiku';
 }
 
-// Calculate cost from separate input and output token counts
-// Uses per-model pricing when model is known, defaults to current model pricing
-function calculateCost(inputTokens, outputTokens, modelName) {
-    // Resolve which pricing tier to use
+// Calculate cost from separate token counts (cache-aware)
+// Cache read tokens are charged at 10% of input price
+function calculateCost(uncachedInputTokens, outputTokens, modelName, cacheReadTokens = 0) {
     const tier = resolveModelTier(modelName);
-
     const pricing = tokenCosts[tier] || tokenCosts['haiku'];
-    const inputCost = (inputTokens / 1_000_000) * pricing.input;
+
+    const inputCost = (uncachedInputTokens / 1_000_000) * pricing.input;
+    const cacheCost = (cacheReadTokens / 1_000_000) * (pricing.cacheRead || pricing.input * 0.1);
     const outputCost = (outputTokens / 1_000_000) * pricing.output;
-    return inputCost + outputCost;
+    return inputCost + cacheCost + outputCost;
 }
 
 // Extract and breakdown tokens/cost by day from API response
@@ -647,11 +648,12 @@ function extractDailyBreakdown(usageData, groupByAgent = false) {
 
             if (bucket.results && Array.isArray(bucket.results)) {
                 bucket.results.forEach(result => {
-                    const inputTokens = (result.uncached_input_tokens || 0) +
-                                        (result.cache_read_input_tokens || 0);
+                    const uncachedInput = (result.uncached_input_tokens || 0);
+                    const cacheReadInput = (result.cache_read_input_tokens || 0);
+                    const inputTokens = uncachedInput + cacheReadInput;
                     const outputTokens = (result.output_tokens || 0);
                     const dayTokens = inputTokens + outputTokens;
-                    const dayCost = calculateCost(inputTokens, outputTokens, result.model);
+                    const dayCost = calculateCost(uncachedInput, outputTokens, result.model, cacheReadInput);
                     const modelTier = resolveModelTier(result.model);
 
                     totalTokens += dayTokens;
@@ -1020,6 +1022,130 @@ function fetchAllTimeCosts(nextPage = null, groupByAgent = false, accumulatedPer
     });
 }
 
+// ─── Cost Report API (actual billed amounts) ────────────────────────────────
+// Returns real USD costs from Anthropic's billing system (24h delay)
+// Amount is in cents (divide by 100 for dollars)
+function fetchAllTimeCostAPI(nextPage = null, accumulatedCost = 0, accumulatedDailyBreakdown = []) {
+    return new Promise((resolve) => {
+        const apiKey = getEffectiveApiKey();
+
+        if (!apiKey) {
+            resolve(null);
+            return;
+        }
+
+        try {
+            const now = new Date();
+            const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0));
+            // Cost API has ~24h delay, so fetch through yesterday
+            const yesterday = new Date(startOfDay.getTime() - 24 * 60 * 60 * 1000);
+            const endOfYesterday = new Date(yesterday.getTime() + 23 * 60 * 60 * 1000 + 59 * 60 * 1000 + 59 * 1000);
+
+            const startOfYear = new Date(Date.UTC(2026, 0, 1, 0, 0, 0));
+
+            const startingAt = startOfYear.toISOString();
+            const endingAt = endOfYesterday.toISOString();
+
+            // Use the Cost Report API endpoint (not Usage Report)
+            const url = new URL('https://api.anthropic.com/v1/organizations/cost_report');
+            url.searchParams.append('starting_at', startingAt);
+            url.searchParams.append('ending_at', endingAt);
+            url.searchParams.append('bucket_width', '1d');
+            url.searchParams.append('limit', '31');
+
+            if (nextPage) {
+                url.searchParams.append('page', nextPage);
+            }
+
+            console.log(`💵 Fetching ACTUAL costs from Cost Report API${nextPage ? ' (page: ' + nextPage + ')' : ''}...`);
+            console.log(`   Date range: ${startingAt} to ${endingAt}`);
+
+            const curlCmd = `curl -s -X GET "${url.toString()}" \
+              -H "anthropic-version: 2023-06-01" \
+              -H "x-api-key: ${apiKey}"`;
+
+            exec(curlCmd, (error, stdout, stderr) => {
+                if (error) {
+                    console.log('⚠️  Error fetching Cost Report API:', error.message);
+                    resolve(null);
+                    return;
+                }
+
+                if (!stdout || stdout.length === 0) {
+                    console.log('⚠️  Empty response from Cost Report API');
+                    resolve(null);
+                    return;
+                }
+
+                try {
+                    const parsed = JSON.parse(stdout);
+                    if (parsed.error && parsed.error.type) {
+                        if (parsed.error.type === 'rate_limit_error') {
+                            console.log('⚠️  Rate limit hit on Cost Report API');
+                            rateLimitHitCount++;
+                            rateLimitBackoffMs = Math.min(5 * 60 * 1000, 60 * 1000 * rateLimitHitCount);
+                        } else {
+                            console.log('⚠️  Cost Report API error:', parsed.error.type, parsed.error.message);
+                        }
+                        resolve(null);
+                        return;
+                    }
+
+                    // Parse cost data — amount is in cents (decimal string)
+                    let pageCost = 0;
+                    const pageDailyBreakdown = [];
+
+                    if (parsed.data && Array.isArray(parsed.data)) {
+                        parsed.data.forEach(bucket => {
+                            if (bucket.results && Array.isArray(bucket.results)) {
+                                let dayCostCents = 0;
+                                bucket.results.forEach(result => {
+                                    const amountCents = parseFloat(result.amount) || 0;
+                                    dayCostCents += amountCents;
+                                });
+                                const dayCostDollars = dayCostCents / 100;
+                                pageCost += dayCostDollars;
+
+                                if (dayCostDollars > 0) {
+                                    pageDailyBreakdown.push({
+                                        date: bucket.starting_at.split('T')[0],
+                                        cost: dayCostDollars
+                                    });
+                                }
+                            }
+                        });
+                    }
+
+                    console.log(`   Cost Report API page: $${pageCost.toFixed(2)} across ${pageDailyBreakdown.length} days`);
+
+                    // Accumulate across pages
+                    const totalCost = accumulatedCost + pageCost;
+                    const allDailyBreakdown = [...accumulatedDailyBreakdown, ...pageDailyBreakdown];
+
+                    // Handle pagination
+                    if (parsed.has_more && parsed.next_page) {
+                        console.log(`📄 Paginating Cost Report API (next_page: ${parsed.next_page})...`);
+                        fetchAllTimeCostAPI(parsed.next_page, totalCost, allDailyBreakdown).then(resolve);
+                    } else {
+                        console.log(`✅ Cost Report API TOTAL (actual billed): $${totalCost.toFixed(2)}`);
+                        resolve({
+                            actualCost: totalCost,
+                            dailyBreakdown: allDailyBreakdown
+                        });
+                    }
+                } catch (parseError) {
+                    console.log('⚠️  Error parsing Cost Report API response:', parseError.message);
+                    console.log('   Raw response:', stdout.substring(0, 500));
+                    resolve(null);
+                }
+            });
+        } catch (error) {
+            console.log('⚠️  Error setting up Cost Report API request:', error.message);
+            resolve(null);
+        }
+    });
+}
+
 // ─── Project & Agent Detection ──────────────────────────────────────────────
 let projectInfo = {
     name: path.basename(process.cwd()),
@@ -1336,12 +1462,13 @@ function updateWorkQueue() {
 
         const parts = line.split(/\s+/);
         if (parts.length > 4) {
+          const isActive = parts[parts.length - 2] === 'ok';
           cronTasks.push({
             id: `cron-${index}`,
             title: parts.slice(1, 4).join(' '),
             description: `Scheduled cron job: ${parts.slice(4).join(' ')}`,
-            status: parts[parts.length - 2] === 'ok' ? 'ACTIVE' : 'QUEUE',
-            progress: parts[parts.length - 2] === 'ok' ? 100 : 0,
+            status: isActive ? 'ACTIVE' : 'BACKLOG',
+            progress: isActive ? 100 : 0,
             eta: 'Scheduled'
           });
         }
@@ -1401,8 +1528,15 @@ async function updateTokenMetrics() {
 
   const hasAgents = agentsConfig.agents && agentsConfig.agents.length > 0;
 
-  const todaysData = await fetchTodaysUsage(hasAgents);
-  const allTimeCosts = await fetchAllTimeCosts(null, hasAgents);
+  // Fetch all three data sources in parallel:
+  // 1. Today's live usage (Usage Report API, minute granularity) - for live estimate
+  // 2. All-time usage breakdown (Usage Report API) - for per-agent/model breakdowns
+  // 3. All-time ACTUAL cost (Cost Report API) - for real billed amount
+  const [todaysData, allTimeCosts, costApiData] = await Promise.all([
+    fetchTodaysUsage(hasAgents),
+    fetchAllTimeCosts(null, hasAgents),
+    fetchAllTimeCostAPI()
+  ]);
 
   if (todaysData) {
     tokenMetrics.today = {
@@ -1411,8 +1545,16 @@ async function updateTokenMetrics() {
     };
   }
 
-  if (allTimeCosts) {
+  // Use ACTUAL billed cost from Cost Report API when available
+  // Fall back to Usage API token-based estimate if Cost API fails
+  if (costApiData) {
+    tokenMetrics.allTime.total.cost = costApiData.actualCost;
+    tokenMetrics.allTime.total.source = 'cost_api'; // actual billed
+    console.log(`💵 Using ACTUAL billed cost: $${costApiData.actualCost.toFixed(2)} (Cost Report API)`);
+  } else if (allTimeCosts) {
     tokenMetrics.allTime.total.cost = allTimeCosts.cost;
+    tokenMetrics.allTime.total.source = 'usage_api'; // estimated from tokens
+    console.log(`📊 Using ESTIMATED cost: $${allTimeCosts.cost.toFixed(2)} (Usage Report API - Cost API unavailable)`);
   }
 
   // Per-agent cost tracking
@@ -1496,15 +1638,26 @@ async function updateTokenMetrics() {
   }
 
   // ── Cost Projection & Alerts (Feature 1) ──────────────────────────────
-  // Build daily cost map from allTime + today dailyBreakdown entries
+  // Build daily cost map — prefer Cost API (actual) for historical, Usage API for today
   const dailyCostMap = {};
-  const allBreakdowns = [
-    ...(allTimeCosts?.dailyBreakdown || []),
-    ...(todaysData?.dailyBreakdown || [])
-  ];
-  allBreakdowns.forEach(entry => {
-    const date = entry.date;
-    dailyCostMap[date] = (dailyCostMap[date] || 0) + (entry.cost || 0);
+
+  // Use Cost API daily breakdown for historical days (actual billed amounts)
+  if (costApiData?.dailyBreakdown) {
+    costApiData.dailyBreakdown.forEach(entry => {
+      dailyCostMap[entry.date] = (dailyCostMap[entry.date] || 0) + (entry.cost || 0);
+    });
+    console.log(`   📈 Projection using ${costApiData.dailyBreakdown.length} days from Cost API (actual)`);
+  } else {
+    // Fallback: use Usage API breakdown (token-based estimate)
+    (allTimeCosts?.dailyBreakdown || []).forEach(entry => {
+      dailyCostMap[entry.date] = (dailyCostMap[entry.date] || 0) + (entry.cost || 0);
+    });
+    console.log(`   📈 Projection using Usage API breakdown (estimated)`);
+  }
+
+  // Always add today's live estimate from Usage API
+  (todaysData?.dailyBreakdown || []).forEach(entry => {
+    dailyCostMap[entry.date] = (dailyCostMap[entry.date] || 0) + (entry.cost || 0);
   });
 
   // Build sorted daily cost history (last 30 days)
@@ -1548,16 +1701,19 @@ async function updateTokenMetrics() {
 
   console.log(`📈 Cost projection: MTD=$${mtdCost.toFixed(2)}, avg7d=$${avgDaily7.toFixed(2)}/d, projected=$${projectedMonthly.toFixed(2)}/mo, WoW=${weekOverWeek.toFixed(1)}%${tokenMetrics.thresholdExceeded ? ' ⚠️ THRESHOLD EXCEEDED' : ''}`);
 
-  if (todaysData && allTimeCosts) {
+  if (todaysData && (allTimeCosts || costApiData)) {
     rateLimitHitCount = 0;
     rateLimitBackoffMs = 0;
     console.log('✅ Rate limit counter reset - API calls successful');
   }
 
-  if (todaysData || allTimeCosts) {
-    console.log('💰 Real costs from Anthropic APIs:', {
-      today: todaysData ? `$${todaysData.cost.toFixed(4)}` : 'N/A',
-      allTime: allTimeCosts ? `$${allTimeCosts.cost.toFixed(2)}` : 'N/A'
+  if (todaysData || allTimeCosts || costApiData) {
+    const allTimeSource = costApiData ? 'ACTUAL (Cost API)' : (allTimeCosts ? 'ESTIMATED (Usage API)' : 'N/A');
+    const allTimeCostValue = costApiData ? costApiData.actualCost : (allTimeCosts ? allTimeCosts.cost : 0);
+    console.log('💰 Costs from Anthropic APIs:', {
+      today_live_estimate: todaysData ? `$${todaysData.cost.toFixed(4)}` : 'N/A',
+      allTime_value: `$${allTimeCostValue.toFixed(2)}`,
+      allTime_source: allTimeSource
     });
   } else {
     console.log('💰 Cost metrics updated (Anthropic APIs unavailable)');
@@ -1795,12 +1951,15 @@ app.post('/api/agents/configure', (req, res) => {
     saveAgentsConfig(agentsConfig);
     rebuildApiKeyIdMap();
 
-    // Broadcast updated agent config
+    // Broadcast updated agent config (include agentsList for header roster)
     broadcast({
         type: 'agentConfigUpdate',
         data: {
             agentConfig: AGENT_CONFIG,
-            agentCount: agentsConfig.agents.length
+            agentCount: agentsConfig.agents.length,
+            agentsList: (agentsConfig.agents || []).map(a => ({
+                name: a.name, slug: a.slug, color: a.color, apiKeyId: a.apiKeyId
+            }))
         }
     });
 
