@@ -1353,3 +1353,67 @@ setInterval(() => {
         });
     }
 }, 1000);
+
+// ─── Debug Panel ─────────────────────────────────────────────────────────
+(function setupDebugPanel() {
+    const toggle = document.getElementById('debug-toggle');
+    const content = document.getElementById('debug-content');
+    const arrow = document.getElementById('debug-arrow');
+    if (!toggle || !content) return;
+
+    toggle.addEventListener('click', () => {
+        const isOpen = content.style.display !== 'none';
+        content.style.display = isOpen ? 'none' : 'block';
+        arrow.classList.toggle('open', !isOpen);
+    });
+})();
+
+// Store last debug info for display
+let _debugInfo = {};
+
+function updateDebugDisplay(metrics) {
+    _debugInfo.lastUpdate = new Date().toLocaleTimeString();
+    _debugInfo.costSource = metrics?.allTime?.total?.source || 'unknown';
+    _debugInfo.allTimeCost = metrics?.allTime?.total?.cost?.toFixed(4) || '0';
+    _debugInfo.todayCost = metrics?.today?.cost?.toFixed(4) || '0';
+    _debugInfo.cacheHitRate = metrics?.cacheHitRate || 'N/A';
+    _debugInfo.agentCount = metrics?.perAgent ? Object.keys(metrics.perAgent).length : 0;
+    _debugInfo.modelBreakdown = metrics?.modelBreakdown ? JSON.stringify(metrics.modelBreakdown) : 'N/A';
+    _debugInfo.projected = metrics?.projectedMonthly?.toFixed(2) || 'N/A';
+    _debugInfo.threshold = metrics?.costAlertThreshold || 'none';
+    _debugInfo.dailyHistoryDays = metrics?.dailyCostHistory?.length || 0;
+
+    const el = document.getElementById('debug-output');
+    if (!el) return;
+
+    const src = _debugInfo.costSource === 'cost_api' ? 'ok' : 'warn';
+    el.innerHTML = [
+        `<span class="debug-label">Last Update:</span> ${_debugInfo.lastUpdate}`,
+        `<span class="debug-label">Cost Source:</span> <span class="debug-${src}">${_debugInfo.costSource}</span> ${_debugInfo.costSource === 'cost_api' ? '(actual billed)' : '(token estimate — Cost API may have failed)'}`,
+        `<span class="debug-label">All-Time (from API):</span> $${_debugInfo.allTimeCost}`,
+        `<span class="debug-label">Today Estimate:</span> $${_debugInfo.todayCost}`,
+        `<span class="debug-label">Combined Display:</span> $${(parseFloat(_debugInfo.allTimeCost) + parseFloat(_debugInfo.todayCost)).toFixed(2)}`,
+        `<span class="debug-label">Cache Hit Rate:</span> ${_debugInfo.cacheHitRate}%`,
+        `<span class="debug-label">Agents Tracked:</span> ${_debugInfo.agentCount}`,
+        `<span class="debug-label">Model Split:</span> ${_debugInfo.modelBreakdown}`,
+        `<span class="debug-label">Projected Monthly:</span> $${_debugInfo.projected}`,
+        `<span class="debug-label">Alert Threshold:</span> $${_debugInfo.threshold}`,
+        `<span class="debug-label">Daily History:</span> ${_debugInfo.dailyHistoryDays} days`,
+        `<span class="debug-label">Supabase:</span> ${window._supabaseStatus || 'unknown'}`,
+        `<span class="debug-label">WS State:</span> ${ws ? ['CONNECTING','OPEN','CLOSING','CLOSED'][ws.readyState] : 'null'}`,
+    ].join('\n');
+}
+
+// Hook into updateTokenMetricsDisplay to also update debug
+const _origUpdateTokenMetrics = updateTokenMetricsDisplay;
+updateTokenMetricsDisplay = function(metrics) {
+    _origUpdateTokenMetrics(metrics);
+    updateDebugDisplay(metrics);
+};
+
+// Capture supabase status from initial data
+const _origUpdateAllData = updateAllData;
+updateAllData = function(data) {
+    window._supabaseStatus = data.supabaseStatus || 'unknown';
+    _origUpdateAllData(data);
+};

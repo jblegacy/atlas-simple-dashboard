@@ -591,11 +591,12 @@ try {
     }
 } catch (e) { /* ignore */ }
 
-// Token costs (per million tokens)
+// Token costs (per million tokens) — updated Feb 2026
+// Cache read = 10% of input price (0.1x multiplier)
 const tokenCosts = {
-    'haiku': { input: 0.80, output: 4.00 },
-    'sonnet': { input: 3.00, output: 15.00 },
-    'opus': { input: 15.00, output: 75.00 }
+    'haiku': { input: 1.00, output: 5.00, cacheRead: 0.10 },
+    'sonnet': { input: 3.00, output: 15.00, cacheRead: 0.30 },
+    'opus': { input: 5.00, output: 25.00, cacheRead: 0.50 }
 };
 
 // Usage API returns tokens only - we calculate cost using token pricing for today's live estimate
@@ -613,16 +614,16 @@ function resolveModelTier(modelName) {
     return 'haiku';
 }
 
-// Calculate cost from separate input and output token counts
-// Uses per-model pricing when model is known, defaults to current model pricing
-function calculateCost(inputTokens, outputTokens, modelName) {
-    // Resolve which pricing tier to use
+// Calculate cost from separate token counts (cache-aware)
+// Cache read tokens are charged at 10% of input price
+function calculateCost(uncachedInputTokens, outputTokens, modelName, cacheReadTokens = 0) {
     const tier = resolveModelTier(modelName);
-
     const pricing = tokenCosts[tier] || tokenCosts['haiku'];
-    const inputCost = (inputTokens / 1_000_000) * pricing.input;
+
+    const inputCost = (uncachedInputTokens / 1_000_000) * pricing.input;
+    const cacheCost = (cacheReadTokens / 1_000_000) * (pricing.cacheRead || pricing.input * 0.1);
     const outputCost = (outputTokens / 1_000_000) * pricing.output;
-    return inputCost + outputCost;
+    return inputCost + cacheCost + outputCost;
 }
 
 // Extract and breakdown tokens/cost by day from API response
@@ -647,11 +648,12 @@ function extractDailyBreakdown(usageData, groupByAgent = false) {
 
             if (bucket.results && Array.isArray(bucket.results)) {
                 bucket.results.forEach(result => {
-                    const inputTokens = (result.uncached_input_tokens || 0) +
-                                        (result.cache_read_input_tokens || 0);
+                    const uncachedInput = (result.uncached_input_tokens || 0);
+                    const cacheReadInput = (result.cache_read_input_tokens || 0);
+                    const inputTokens = uncachedInput + cacheReadInput;
                     const outputTokens = (result.output_tokens || 0);
                     const dayTokens = inputTokens + outputTokens;
-                    const dayCost = calculateCost(inputTokens, outputTokens, result.model);
+                    const dayCost = calculateCost(uncachedInput, outputTokens, result.model, cacheReadInput);
                     const modelTier = resolveModelTier(result.model);
 
                     totalTokens += dayTokens;

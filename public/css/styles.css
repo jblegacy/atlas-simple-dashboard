@@ -1651,3 +1651,69 @@ body {
 .task-duration.running {
     color: var(--accent-blue);
 }
+
+/* ─── Debug Panel ────────────────────────────────────────────────────────── */
+.debug-panel {
+    background-color: var(--bg-secondary);
+    border-top: 1px solid var(--border-color);
+    font-size: 10px;
+    font-family: 'JetBrains Mono', monospace;
+}
+
+.debug-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 4px 12px;
+    cursor: pointer;
+    color: var(--text-secondary);
+    user-select: none;
+}
+
+.debug-header:hover {
+    background-color: var(--bg-tertiary);
+    color: var(--text-primary);
+}
+
+.debug-arrow {
+    font-size: 8px;
+    transition: transform 0.2s;
+}
+
+.debug-arrow.open {
+    transform: rotate(90deg);
+}
+
+.debug-content {
+    padding: 8px 12px;
+    background-color: var(--bg-primary);
+    border-top: 1px solid var(--border-color);
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.debug-content pre {
+    color: var(--text-secondary);
+    font-size: 10px;
+    white-space: pre-wrap;
+    word-break: break-all;
+    margin: 0;
+    line-height: 1.6;
+}
+
+.debug-content .debug-label {
+    color: var(--accent-blue);
+    font-weight: 600;
+}
+
+.debug-content .debug-warn {
+    color: var(--accent-yellow);
+}
+
+.debug-content .debug-ok {
+    color: var(--accent-green);
+}
+
+.debug-content .debug-err {
+    color: var(--accent-red);
+}
