@@ -1592,23 +1592,66 @@ async function updateTokenMetrics() {
       const totalInput = agentCacheRead + agentUncached;
       const cacheHitRate = totalInput > 0 ? Math.round((agentCacheRead / totalInput) * 100) : 0;
 
+      // Per-agent per-model cost breakdown (for detailed scorecard)
+      const modelCostBreakdown = {};
+      Object.entries(agentModelTokens).forEach(([model, tokens]) => {
+        // Reconstruct approximate cost per model for this agent
+        // We have total tokens per model but not split by input/output per model
+        // Use the overall ratio from raw data as approximation
+        const allTimeModelData = allTimeAgentData?.modelTokens?.[model] || 0;
+        const todayModelData = todayAgentData?.modelTokens?.[model] || 0;
+        const totalModelTokens = allTimeModelData + todayModelData;
+        const pct = agentTotalTokens > 0 ? totalModelTokens / agentTotalTokens : 0;
+        const agentTotalCost = (allTimeAgentData?.cost || 0) + (todayAgentData?.cost || 0);
+        modelCostBreakdown[model] = {
+          tokens: totalModelTokens,
+          pct: agentTotalTokens > 0 ? Math.round(pct * 100) : 0,
+          estCost: agentTotalCost * pct
+        };
+      });
+
       const slug = agent.slug || agent.name.toLowerCase();
       agentBreakdown[slug] = {
         name: agent.name,
         color: agent.color || AGENT_CONFIG[slug]?.color || '#007acc',
         today: todayAgentData?.cost || 0,
-        allTime: (allTimeAgentData?.cost || 0) + (todayAgentData?.cost || 0),
+        allTimeEstimated: (allTimeAgentData?.cost || 0) + (todayAgentData?.cost || 0),
         estimatedDaily: estimatedDaily,
         todayTokens: todayAgentData?.tokens || 0,
+        allTimeTokens: (allTimeAgentData?.tokens || 0) + (todayAgentData?.tokens || 0),
         models: models,
-        cacheHitRate: cacheHitRate
+        modelCosts: modelCostBreakdown,
+        cacheHitRate: cacheHitRate,
+        cacheReadTokens: agentCacheRead,
+        uncachedInputTokens: agentUncached
       };
+    });
+
+    // Proportional allocation: split Cost API actual total by each agent's Usage API share
+    // This gives per-agent "actual" costs even though Cost API doesn't support group_by api_key_id
+    const usageApiOrgTotal = Object.values(agentBreakdown).reduce((s, d) => s + d.allTimeEstimated, 0);
+    const costApiActualTotal = costApiData?.actualCost || null;
+
+    Object.values(agentBreakdown).forEach(agent => {
+      if (costApiActualTotal !== null && usageApiOrgTotal > 0) {
+        const proportion = agent.allTimeEstimated / usageApiOrgTotal;
+        agent.allTimeActual = proportion * costApiActualTotal;
+        agent.allTimeSource = 'cost_api_proportional';
+      } else {
+        agent.allTimeActual = agent.allTimeEstimated;
+        agent.allTimeSource = 'usage_api';
+      }
+      // Keep allTime as the best available number (actual when possible)
+      agent.allTime = agent.allTimeActual;
     });
 
     tokenMetrics.perAgent = agentBreakdown;
     console.log('👥 Per-agent costs:', Object.entries(agentBreakdown).map(([slug, d]) =>
-      `${d.name}: today=$${d.today.toFixed(4)}, allTime=$${d.allTime.toFixed(2)}, est=$${d.estimatedDaily.toFixed(2)}/d, models=${JSON.stringify(d.models)}`
+      `${d.name}: today=$${d.today.toFixed(4)}, allTime=$${d.allTime.toFixed(2)} (${d.allTimeSource}), est=$${d.estimatedDaily.toFixed(2)}/d`
     ).join(', '));
+    if (costApiActualTotal !== null) {
+      console.log(`   💵 Proportional allocation: Cost API total=$${costApiActualTotal.toFixed(2)}, Usage API total=$${usageApiOrgTotal.toFixed(2)}`);
+    }
   }
 
   // Global model breakdown from API data (replaces legacy getModelUsagePercents when available)

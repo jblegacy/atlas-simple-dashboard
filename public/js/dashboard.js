@@ -1026,6 +1026,7 @@ function updateAgentCostsDisplay(agentCosts) {
 }
 
 // Display per-agent costs from Usage Report API (group_by api_key_id)
+// All-time uses proportional allocation from Cost Report API when available
 function updatePerAgentCostsDisplay(perAgent) {
     const totalEl = document.getElementById('cost-by-bot-total');
     const breakdownEl = document.getElementById('bot-breakdown');
@@ -1037,20 +1038,40 @@ function updatePerAgentCostsDisplay(perAgent) {
 
     window._perAgentDisplayed = true;
 
+    // Detect if any agent has actual (proportional) cost data
+    const hasActual = agents.some(([, d]) => d.allTimeSource === 'cost_api_proportional');
+
     let totalAllTime = 0;
+    let totalToday = 0;
     let html = `
         <div class="agent-cost-header">
             <span></span>
             <span>today</span>
             <span>all-time</span>
-            <span>est/day</span>
+            <span>$/day</span>
             <span>cache</span>
         </div>
     `;
 
     agents.forEach(([slug, data]) => {
-        totalAllTime += data.allTime || 0;
+        const allTimeVal = data.allTime || 0;
+        totalAllTime += allTimeVal;
+        totalToday += data.today || 0;
         const dotColor = data.color || '#007acc';
+
+        // Build per-model cost detail tooltip/expansion
+        const modelDetails = [];
+        if (data.modelCosts) {
+            Object.entries(data.modelCosts)
+                .sort((a, b) => b[1].estCost - a[1].estCost)
+                .forEach(([model, info]) => {
+                    const cap = model.charAt(0).toUpperCase() + model.slice(1);
+                    modelDetails.push(`${cap}: ${info.pct}% ($${info.estCost.toFixed(2)})`);
+                });
+        }
+
+        // Token summary
+        const tokenStr = data.allTimeTokens ? formatTokens(data.allTimeTokens) + ' tok' : '';
 
         html += `
             <div class="agent-cost-row">
@@ -1059,17 +1080,45 @@ function updatePerAgentCostsDisplay(perAgent) {
                     ${escapeHtml(data.name)}
                 </span>
                 <span class="agent-cost-today">$${(data.today || 0).toFixed(2)}</span>
-                <span class="agent-cost-alltime">$${(data.allTime || 0).toFixed(2)}</span>
+                <span class="agent-cost-alltime">$${allTimeVal.toFixed(2)}</span>
                 <span class="agent-cost-daily">~$${(data.estimatedDaily || 0).toFixed(2)}</span>
                 <span class="agent-cost-cache">${data.cacheHitRate || 0}%</span>
             </div>
         `;
+
+        // Per-model cost detail row (indented under agent)
+        if (modelDetails.length > 0) {
+            html += `
+                <div class="agent-cost-detail">
+                    <span class="agent-cost-detail-models">${modelDetails.join(' · ')}</span>
+                    ${tokenStr ? `<span class="agent-cost-detail-tokens">${tokenStr}</span>` : ''}
+                </div>
+            `;
+        }
     });
+
+    // Summary row
+    html += `
+        <div class="agent-cost-summary">
+            <span>Total</span>
+            <span>$${totalToday.toFixed(2)}</span>
+            <span>$${totalAllTime.toFixed(2)}</span>
+            <span></span>
+            <span></span>
+        </div>
+    `;
+
+    // Disclaimer about estimation methodology
+    const disclaimerText = hasActual
+        ? 'Per-agent costs are estimated by splitting the org-wide actual cost (Cost Report API) proportionally by each agent\'s token usage. Anthropic does not provide per-API-key cost breakdowns.'
+        : 'All costs are estimated from token counts using published pricing. Anthropic does not provide per-API-key cost breakdowns.';
+
+    html += `<div class="agent-cost-disclaimer">${disclaimerText}</div>`;
 
     totalEl.textContent = `$${totalAllTime.toFixed(2)}`;
     breakdownEl.innerHTML = html;
 
-    console.log('💳 Per-Agent Costs (API):', perAgent);
+    console.log('💳 Per-Agent Costs (API):', { source: hasActual ? 'cost_api_proportional' : 'usage_api', agents: perAgent });
 }
 
 // Format large token numbers
