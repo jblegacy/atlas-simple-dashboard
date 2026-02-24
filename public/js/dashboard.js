@@ -587,9 +587,10 @@ function updateQueueStatus() {
     const statusEl = document.getElementById('queue-status');
     if (!statusEl) return;
     
-    // Check if there are any active/in-progress tasks
-    const hasActiveTasks = allTasks.some(task => 
-        task.status === 'ACTIVE' || task.status === 'IN_PROGRESS'
+    // Check if there are any active/in-progress manual tasks (exclude cron jobs)
+    const hasActiveTasks = allTasks.some(task =>
+        (task.status === 'ACTIVE' || task.status === 'IN_PROGRESS') &&
+        !(task.id && task.id.toString().startsWith('cron-'))
     );
     
     const agentDisplayName = window.projectInfo?.agentName || 'Agent';
@@ -609,31 +610,39 @@ function filterAndRenderWorkQueue() {
         return;
     }
     
+    // Helper: identify cron tasks by their synthetic ID prefix
+    const isCronTask = (item) => item.id && item.id.toString().startsWith('cron-');
+
     // Filter tasks by current tab
-    // BACKLOG tab also shows QUEUE status (legacy cron jobs)
+    // RECURRING tab shows only cron jobs; all other tabs exclude cron jobs
     const filteredTasks = allTasks.filter(item => {
+        if (currentTab === 'RECURRING') {
+            return isCronTask(item);
+        }
+        // Exclude cron jobs from all other tabs
+        if (isCronTask(item)) return false;
+
         if (currentTab === 'BACKLOG') {
             return item.status === 'BACKLOG' || item.status === 'QUEUE';
         }
         return item.status === currentTab;
     });
-    
+
     if (filteredTasks.length === 0) {
         smoothSetHTML(workQueueDiv, `<div class="loading">No ${currentTab.toLowerCase()} tasks</div>`);
         return;
     }
-    
+
     let html = '';
     filteredTasks.forEach(item => {
-        const isManualTask = item.createdAt; // Manual tasks have createdAt
+        const isCron = isCronTask(item);
         const statusClass = item.status.toLowerCase();
-        
+
         // Extract agent from eta or metadata (currently shows "Atlas-generated")
         let agentClass = 'agent-atlas'; // default
         let agentBadge = '';
-        
-        if (item.eta && item.eta.includes('generated')) {
-            // Extract agent from task (if stored in metadata)
+
+        if (!isCron && item.eta && item.eta.includes('generated')) {
             if (item.agent) {
                 const agentName = item.agent.toLowerCase();
                 agentClass = `agent-${agentName}`;
@@ -642,36 +651,44 @@ function filterAndRenderWorkQueue() {
                 agentBadge = `<span class="agent-badge atlas">Atlas</span>`;
             }
         }
-        
-        // Feature 11: Task duration
+
+        // Cron items get purple styling and CRON badge
+        const itemClass = isCron ? 'cron-job' : agentClass;
+        const badgeHtml = isCron ? '<span class="cron-badge">CRON</span>' : agentBadge;
+        const displayStatus = isCron ? 'RECURRING' : item.status;
+        const displayStatusClass = isCron ? 'recurring' : statusClass;
+
+        // Feature 11: Task duration (not applicable to cron jobs)
         let durationHtml = '';
-        if (item.completedAt && item.startedAt) {
-            const dur = new Date(item.completedAt) - new Date(item.startedAt);
-            durationHtml = `<span class="task-duration">Took ${formatDuration(dur)}</span>`;
-        } else if (item.startedAt && ['ACTIVE', 'IN_PROGRESS'].includes(item.status)) {
-            const dur = Date.now() - new Date(item.startedAt).getTime();
-            durationHtml = `<span class="task-duration running">Running ${formatDuration(dur)}</span>`;
+        if (!isCron) {
+            if (item.completedAt && item.startedAt) {
+                const dur = new Date(item.completedAt) - new Date(item.startedAt);
+                durationHtml = `<span class="task-duration">Took ${formatDuration(dur)}</span>`;
+            } else if (item.startedAt && ['ACTIVE', 'IN_PROGRESS'].includes(item.status)) {
+                const dur = Date.now() - new Date(item.startedAt).getTime();
+                durationHtml = `<span class="task-duration running">Running ${formatDuration(dur)}</span>`;
+            }
         }
 
         html += `
-            <div class="work-item ${agentClass}">
-                ${agentBadge}
+            <div class="work-item ${itemClass}">
+                ${badgeHtml}
                 <div class="work-title">${escapeHtml(item.title)}</div>
                 <div class="work-description">${escapeHtml(item.description)}</div>
-                ${item.progress > 0 ? `
+                ${item.progress > 0 && !isCron ? `
                     <div class="progress-bar">
                         <div class="progress-fill" style="width: ${item.progress}%"></div>
                     </div>
                 ` : ''}
                 <div class="work-status">
-                    <span class="status-badge ${statusClass}">${item.status}</span>
+                    <span class="status-badge ${displayStatusClass}">${displayStatus}</span>
                     ${durationHtml}
-                    <span>${item.eta}</span>
+                    <span>${isCron ? 'Scheduled' : item.eta}</span>
                 </div>
             </div>
         `;
     });
-    
+
     smoothSetHTML(workQueueDiv, html);
 }
 
