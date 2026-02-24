@@ -81,10 +81,15 @@ let apiKeyIdToAgent = new Map();
 
 function loadAgentsConfig() {
     try {
+        console.log(`📂 Looking for agents config at: ${AGENTS_CONFIG_FILE}`);
         if (fs.existsSync(AGENTS_CONFIG_FILE)) {
-            const config = JSON.parse(fs.readFileSync(AGENTS_CONFIG_FILE, 'utf8'));
-            console.log(`✅ Loaded agents config: ${(config.agents || []).length} agents, admin key: ${config.adminApiKey ? 'set' : 'not set'}`);
+            const raw = fs.readFileSync(AGENTS_CONFIG_FILE, 'utf8');
+            const config = JSON.parse(raw);
+            const agentNames = (config.agents || []).map(a => a.name).join(', ');
+            console.log(`✅ Loaded agents config: ${(config.agents || []).length} agents [${agentNames}], admin key: ${config.adminApiKey ? 'set' : 'not set'}`);
             return config;
+        } else {
+            console.log('⚠️  No agents.json found — agents not configured. Add them via the dashboard modal (Agent Keys tab).');
         }
     } catch (error) {
         console.log('⚠️  Error loading agents config:', error.message);
@@ -94,10 +99,21 @@ function loadAgentsConfig() {
 
 function saveAgentsConfig(config) {
     try {
-        fs.writeFileSync(AGENTS_CONFIG_FILE, JSON.stringify(config, null, 2));
-        console.log('✅ Saved agents config to file');
+        // Ensure config directory exists before writing
+        if (!fs.existsSync(CONFIG_DIR)) {
+            fs.mkdirSync(CONFIG_DIR, { recursive: true });
+        }
+        const json = JSON.stringify(config, null, 2);
+        fs.writeFileSync(AGENTS_CONFIG_FILE, json);
+        // Verify the write succeeded
+        if (fs.existsSync(AGENTS_CONFIG_FILE)) {
+            const written = fs.readFileSync(AGENTS_CONFIG_FILE, 'utf8');
+            console.log(`✅ Saved agents config to ${AGENTS_CONFIG_FILE} (${written.length} bytes, ${(config.agents || []).length} agents)`);
+        } else {
+            console.log('❌ agents.json write appeared to succeed but file not found!');
+        }
     } catch (error) {
-        console.log('⚠️  Error saving agents config:', error.message);
+        console.log('❌ Error saving agents config:', error.message, error.stack);
     }
 }
 
@@ -1392,6 +1408,31 @@ function detectRunningAgentModels() {
                 .join(', ');
             console.log(`🔍 Agent process models: ${summary || 'none detected'}`);
             broadcast({ type: 'agentProcessModels', data: agentProcessModels });
+
+            // When no agent API keys are configured, also push process-detected agents
+            // as tokenMetrics.perAgent so the Active Models card renders immediately
+            const hasAgentKeys = agentsConfig.agents && agentsConfig.agents.length > 0;
+            if (!hasAgentKeys) {
+                const processAgentBreakdown = {};
+                Object.entries(agentProcessModels).forEach(([slug, info]) => {
+                    const agentCfg = AGENT_CONFIG[slug] || DEFAULT_AGENT_CONFIG[slug];
+                    processAgentBreakdown[slug] = {
+                        name: agentCfg?.name || slug.charAt(0).toUpperCase() + slug.slice(1),
+                        color: agentCfg?.color || '#007acc',
+                        today: 0, allTimeEstimated: 0, estimatedDaily: 0,
+                        todayTokens: 0, allTimeTokens: 0,
+                        models: {}, modelCosts: {},
+                        cacheHitRate: 0, cacheReadTokens: 0, uncachedInputTokens: 0,
+                        currentModel: info.model,
+                        lastActiveTime: info.detectedAt,
+                        modelSource: 'process',
+                        processRunning: true,
+                        allTime: 0, allTimeSource: 'none'
+                    };
+                });
+                tokenMetrics.perAgent = processAgentBreakdown;
+                broadcast({ type: 'tokenMetrics', data: tokenMetrics });
+            }
         }
     });
 }
@@ -1846,6 +1887,38 @@ async function updateTokenMetrics() {
     if (costApiActualTotal !== null) {
       console.log(`   💵 Proportional allocation: Cost API total=$${costApiActualTotal.toFixed(2)}, Usage API total=$${usageApiOrgTotal.toFixed(2)}`);
     }
+  }
+
+  // Even without configured agent API Key IDs, show process-detected agents in Active Models
+  // This gives real-time model visibility from running processes alone
+  if (!hasAgents && Object.keys(agentProcessModels).length > 0) {
+    const processAgentBreakdown = {};
+    Object.entries(agentProcessModels).forEach(([slug, info]) => {
+      const agentCfg = AGENT_CONFIG[slug] || DEFAULT_AGENT_CONFIG[slug];
+      processAgentBreakdown[slug] = {
+        name: agentCfg?.name || slug.charAt(0).toUpperCase() + slug.slice(1),
+        color: agentCfg?.color || '#007acc',
+        today: 0,
+        allTimeEstimated: 0,
+        estimatedDaily: 0,
+        todayTokens: 0,
+        allTimeTokens: 0,
+        models: {},
+        modelCosts: {},
+        cacheHitRate: 0,
+        cacheReadTokens: 0,
+        uncachedInputTokens: 0,
+        currentModel: info.model,
+        lastActiveTime: info.detectedAt,
+        modelSource: 'process',
+        processRunning: true,
+        allTime: 0,
+        allTimeSource: 'none'
+      };
+    });
+    tokenMetrics.perAgent = processAgentBreakdown;
+    console.log('🔍 No agent API keys configured — showing process-detected agents:',
+      Object.entries(processAgentBreakdown).map(([s, d]) => `${d.name}=${d.currentModel}`).join(', '));
   }
 
   // Global model breakdown from API data (replaces legacy getModelUsagePercents when available)
