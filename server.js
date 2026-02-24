@@ -581,6 +581,9 @@ let tokenMetrics = {
 let rateLimitHitCount = 0;
 let rateLimitBackoffMs = 0;
 
+// Real-time agent process detection (maps agent slug → { model, pid, status })
+let agentProcessModels = {};
+
 // Cost alert threshold (Feature 1)
 let costAlertThreshold = null;
 try {
@@ -632,7 +635,7 @@ function extractDailyBreakdown(usageData, groupByAgent = false) {
     const dailyBreakdown = [];
     let totalTokens = 0;
     let totalCost = 0;
-    const perAgent = {}; // apiKeyId -> { tokens, cost, dailyCosts, modelTokens }
+    const perAgent = {}; // apiKeyId -> { tokens, cost, dailyCosts, modelTokens, lastActiveModel, lastActiveTime }
     const perModel = {}; // modelTier -> totalTokens (global model breakdown)
 
     console.log(`   🔍 DEBUG: usageData.data exists? ${!!usageData.data}, length: ${usageData.data?.length || 0}`);
@@ -668,13 +671,20 @@ function extractDailyBreakdown(usageData, groupByAgent = false) {
                     if (groupByAgent && result.api_key_id) {
                         const keyId = result.api_key_id;
                         if (!perAgent[keyId]) {
-                            perAgent[keyId] = { tokens: 0, cost: 0, dailyCosts: {}, modelTokens: {}, cacheRead: 0, uncachedInput: 0 };
+                            perAgent[keyId] = { tokens: 0, cost: 0, dailyCosts: {}, modelTokens: {}, cacheRead: 0, uncachedInput: 0, lastActiveModel: null, lastActiveTime: null };
                         }
                         perAgent[keyId].tokens += dayTokens;
                         perAgent[keyId].cost += dayCost;
                         perAgent[keyId].modelTokens[modelTier] = (perAgent[keyId].modelTokens[modelTier] || 0) + dayTokens;
                         perAgent[keyId].cacheRead += (result.cache_read_input_tokens || 0);
                         perAgent[keyId].uncachedInput += (result.uncached_input_tokens || 0);
+
+                        // Track most recent model per agent (by bucket timestamp)
+                        const bucketTime = bucket.starting_at;
+                        if (dayTokens > 0 && (!perAgent[keyId].lastActiveTime || bucketTime > perAgent[keyId].lastActiveTime)) {
+                            perAgent[keyId].lastActiveModel = modelTier;
+                            perAgent[keyId].lastActiveTime = bucketTime;
+                        }
 
                         const date = bucket.starting_at.split('T')[0];
                         perAgent[keyId].dailyCosts[date] =
@@ -919,7 +929,7 @@ function fetchAllTimeCosts(nextPage = null, groupByAgent = false, accumulatedPer
                     if (groupByAgent) {
                         Object.entries(pagePerAgent).forEach(([keyId, data]) => {
                             if (!mergedPerAgent[keyId]) {
-                                mergedPerAgent[keyId] = { tokens: 0, cost: 0, dailyCosts: {}, modelTokens: {}, cacheRead: 0, uncachedInput: 0 };
+                                mergedPerAgent[keyId] = { tokens: 0, cost: 0, dailyCosts: {}, modelTokens: {}, cacheRead: 0, uncachedInput: 0, lastActiveModel: null, lastActiveTime: null };
                             }
                             mergedPerAgent[keyId].tokens += data.tokens;
                             mergedPerAgent[keyId].cost += data.cost;
@@ -934,6 +944,11 @@ function fetchAllTimeCosts(nextPage = null, groupByAgent = false, accumulatedPer
                                 mergedPerAgent[keyId].modelTokens[model] =
                                     (mergedPerAgent[keyId].modelTokens[model] || 0) + tokens;
                             });
+                            // Merge lastActiveModel (keep most recent)
+                            if (data.lastActiveTime && (!mergedPerAgent[keyId].lastActiveTime || data.lastActiveTime > mergedPerAgent[keyId].lastActiveTime)) {
+                                mergedPerAgent[keyId].lastActiveModel = data.lastActiveModel;
+                                mergedPerAgent[keyId].lastActiveTime = data.lastActiveTime;
+                            }
                         });
                     }
 
@@ -1250,6 +1265,141 @@ setInterval(() => {
     }
 }, 30000);
 
+// ─── Real-time Agent Process Detection ──────────────────────────────────────
+// Scans running Claude/OpenClaw processes to detect which model each agent is using right now.
+// Maps process working directories or session paths to configured agent names.
+
+function detectRunningAgentModels() {
+    // Get full process details including working directories
+    exec('ps aux | grep -E "(claude|openclaw)" | grep -v grep | grep -v "ShipIt" | grep -v "disclaimer"', (error, stdout) => {
+        if (error || !stdout || !stdout.trim()) {
+            // No processes found — clear all to inactive
+            if (Object.keys(agentProcessModels).length > 0) {
+                agentProcessModels = {};
+                broadcast({ type: 'agentProcessModels', data: agentProcessModels });
+            }
+            return;
+        }
+
+        const lines = stdout.trim().split('\n');
+        const newProcessModels = {};
+        const modelNameMap = {
+            'haiku': 'haiku',
+            'sonnet': 'sonnet',
+            'opus': 'opus'
+        };
+
+        lines.forEach(line => {
+            // Extract --model flag from command line
+            const modelMatch = line.match(/--model\s+([a-zA-Z0-9._-]+)/);
+            if (!modelMatch) return;
+
+            const modelArg = modelMatch[1].toLowerCase(); // e.g., "claude-opus-4-6"
+            let detectedTier = null;
+            for (const [key, tier] of Object.entries(modelNameMap)) {
+                if (modelArg.includes(key)) {
+                    detectedTier = tier;
+                    break;
+                }
+            }
+            if (!detectedTier) return;
+
+            // Extract PID (second field in ps aux)
+            const pid = line.trim().split(/\s+/)[1];
+
+            // Try to identify which agent this process belongs to by matching:
+            // 1. The command line path/args against configured agent names or worktree names
+            // 2. --resume session ID
+            const lowerLine = line.toLowerCase();
+
+            // Check against configured agents
+            const configuredAgents = agentsConfig.agents || [];
+            const allAgentSlugs = Object.keys(AGENT_CONFIG);
+
+            let matchedSlug = null;
+
+            // Match by agent name appearing in the process command line (worktree path, cwd, etc.)
+            for (const slug of allAgentSlugs) {
+                const agentName = AGENT_CONFIG[slug]?.name?.toLowerCase() || slug;
+                // Look for agent name in path segments (e.g., /atlas-worktree/ or /nate/)
+                if (lowerLine.includes(`/${slug}/`) || lowerLine.includes(`/${slug}-`) ||
+                    lowerLine.includes(`-${slug}/`) || lowerLine.includes(`-${slug}-`) ||
+                    lowerLine.includes(` ${slug} `)) {
+                    matchedSlug = slug;
+                    break;
+                }
+            }
+
+            // If we couldn't match to a specific agent, try to use lsof to get the cwd
+            if (!matchedSlug && pid) {
+                // Store as "unknown" process with PID for later resolution
+                // For now, try matching the session/resume ID against project directories
+                const resumeMatch = line.match(/--resume\s+([a-f0-9-]+)/);
+                if (resumeMatch) {
+                    const sessionId = resumeMatch[1];
+                    // Check if session ID appears in any agent's project directory
+                    for (const slug of allAgentSlugs) {
+                        const projectDirPattern = slug;
+                        // Session files are in ~/.claude/projects/<path>/<sessionId>.jsonl
+                        // The project path often contains the worktree/agent name
+                        try {
+                            const projectsDir = path.join(process.env.HOME || '/Users/openclaw', '.claude/projects');
+                            if (fs.existsSync(projectsDir)) {
+                                const projectDirs = fs.readdirSync(projectsDir);
+                                for (const dir of projectDirs) {
+                                    if (dir.toLowerCase().includes(slug)) {
+                                        const sessionFile = path.join(projectsDir, dir, `${sessionId}.jsonl`);
+                                        if (fs.existsSync(sessionFile)) {
+                                            matchedSlug = slug;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        } catch (e) {
+                            // Ignore filesystem errors
+                        }
+                        if (matchedSlug) break;
+                    }
+                }
+            }
+
+            // If still no match but only one agent is configured for this host, assign to it
+            if (!matchedSlug) {
+                const hostAgent = projectInfo.agentName?.toLowerCase();
+                if (hostAgent && AGENT_CONFIG[hostAgent]) {
+                    matchedSlug = hostAgent;
+                }
+            }
+
+            if (matchedSlug) {
+                newProcessModels[matchedSlug] = {
+                    model: detectedTier,
+                    pid: pid,
+                    detectedAt: new Date().toISOString(),
+                    source: 'process'
+                };
+            }
+        });
+
+        // Check if anything changed
+        const changed = JSON.stringify(newProcessModels) !== JSON.stringify(agentProcessModels);
+        agentProcessModels = newProcessModels;
+
+        if (changed) {
+            const summary = Object.entries(agentProcessModels)
+                .map(([slug, info]) => `${slug}=${info.model}(pid:${info.pid})`)
+                .join(', ');
+            console.log(`🔍 Agent process models: ${summary || 'none detected'}`);
+            broadcast({ type: 'agentProcessModels', data: agentProcessModels });
+        }
+    });
+}
+
+// Run on startup and every 10 seconds
+detectRunningAgentModels();
+setInterval(detectRunningAgentModels, 10000);
+
 // ─── WebSocket connections ──────────────────────────────────────────────────
 const clients = new Set();
 
@@ -1283,6 +1433,7 @@ wss.on('connection', (ws) => {
         name: a.name, slug: a.slug, color: a.color, apiKeyId: a.apiKeyId
       })),
       agentHeartbeats: agentHeartbeats,
+      agentProcessModels: agentProcessModels,
       gatewayStatus: 'connected',
       supabaseStatus: supabaseReady ? 'connected' : 'disconnected',
       apiStatus: {
@@ -1610,7 +1761,46 @@ async function updateTokenMetrics() {
         };
       });
 
+      // Determine current active model for this agent
+      // Priority: 1) Real-time process detection (instant) → 2) Today's Usage API (~5min delay) → 3) All-time Usage API → 4) Token count inference
       const slug = agent.slug || agent.name.toLowerCase();
+      let currentActiveModel = null;
+      let currentActiveTime = null;
+      let modelSource = null;
+
+      // Tier 0: Real-time process detection (highest priority — no delay)
+      const processInfo = agentProcessModels[slug];
+      if (processInfo?.model) {
+        currentActiveModel = processInfo.model;
+        currentActiveTime = processInfo.detectedAt;
+        modelSource = 'process';
+      }
+
+      // Tier 1: Today's most recent Usage API model (minute-level, ~5min delay)
+      if (!currentActiveModel && todayAgentData?.lastActiveModel) {
+        currentActiveModel = todayAgentData.lastActiveModel;
+        currentActiveTime = todayAgentData.lastActiveTime;
+        modelSource = 'usage_today';
+      }
+
+      // Tier 2: All-time most recent Usage API model
+      if (!currentActiveModel && allTimeAgentData?.lastActiveModel) {
+        currentActiveModel = allTimeAgentData.lastActiveModel;
+        currentActiveTime = allTimeAgentData.lastActiveTime;
+        modelSource = 'usage_alltime';
+      }
+
+      // Tier 3: Infer from the model with highest token count today, then all-time
+      if (!currentActiveModel) {
+        const todayModels = todayAgentData?.modelTokens || {};
+        const allTimeModels = allTimeAgentData?.modelTokens || {};
+        const modelsToCheck = Object.keys(todayModels).length > 0 ? todayModels : allTimeModels;
+        if (Object.keys(modelsToCheck).length > 0) {
+          currentActiveModel = Object.entries(modelsToCheck)
+            .sort((a, b) => b[1] - a[1])[0][0];
+          modelSource = 'token_inference';
+        }
+      }
       agentBreakdown[slug] = {
         name: agent.name,
         color: agent.color || AGENT_CONFIG[slug]?.color || '#007acc',
@@ -1623,7 +1813,11 @@ async function updateTokenMetrics() {
         modelCosts: modelCostBreakdown,
         cacheHitRate: cacheHitRate,
         cacheReadTokens: agentCacheRead,
-        uncachedInputTokens: agentUncached
+        uncachedInputTokens: agentUncached,
+        currentModel: currentActiveModel,
+        lastActiveTime: currentActiveTime,
+        modelSource: modelSource,
+        processRunning: !!processInfo
       };
     });
 
@@ -1647,7 +1841,7 @@ async function updateTokenMetrics() {
 
     tokenMetrics.perAgent = agentBreakdown;
     console.log('👥 Per-agent costs:', Object.entries(agentBreakdown).map(([slug, d]) =>
-      `${d.name}: today=$${d.today.toFixed(4)}, allTime=$${d.allTime.toFixed(2)} (${d.allTimeSource}), est=$${d.estimatedDaily.toFixed(2)}/d`
+      `${d.name}: today=$${d.today.toFixed(4)}, allTime=$${d.allTime.toFixed(2)} (${d.allTimeSource}), est=$${d.estimatedDaily.toFixed(2)}/d, model=${d.currentModel || 'unknown'}(${d.modelSource || 'none'})${d.processRunning ? '🟢' : ''}`
     ).join(', '));
     if (costApiActualTotal !== null) {
       console.log(`   💵 Proportional allocation: Cost API total=$${costApiActualTotal.toFixed(2)}, Usage API total=$${usageApiOrgTotal.toFixed(2)}`);

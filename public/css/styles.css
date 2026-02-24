@@ -295,34 +295,19 @@ body {
 }
 
 /* Combined Model + Agent Card */
-.model-current-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin-bottom: 4px;
-}
-
-.model-current-row .model-badge {
-    margin-top: 0;
-}
-
-.model-current-name {
-    font-size: clamp(12px, 2vmin, 18px);
-    font-weight: 700;
-    color: var(--accent-yellow);
-}
-
 .model-overall-breakdown {
-    font-size: 10px;
+    font-size: 9px;
     color: var(--text-secondary);
-    margin: 4px 0;
+    opacity: 0.6;
+    margin-top: 4px;
+    padding-top: 4px;
+    border-top: 1px dashed var(--border-color);
     font-family: 'JetBrains Mono', monospace;
 }
 
 .model-per-agent {
-    margin-top: 4px;
-    border-top: 1px solid var(--border-color);
-    padding-top: 4px;
+    margin-top: 2px;
+    padding-top: 0;
 }
 
 .model-per-agent:empty {
@@ -330,27 +315,106 @@ body {
 }
 
 .model-agent-row {
-    display: flex;
+    display: grid;
+    grid-template-columns: 55px auto 1fr;
     align-items: center;
-    gap: 4px;
+    gap: 6px;
     font-size: 9px;
-    line-height: 1.8;
+    line-height: 2;
 }
 
 .model-agent-name {
     font-weight: 600;
     color: var(--text-primary);
-    min-width: 50px;
     display: flex;
     align-items: center;
     gap: 3px;
+    white-space: nowrap;
 }
 
 .model-agent-models {
     color: var(--text-secondary);
     display: flex;
-    gap: 6px;
+    gap: 4px;
     flex-wrap: wrap;
+    font-size: 8px;
+    opacity: 0.7;
+    justify-content: flex-end;
+}
+
+/* Inline model badge (per-agent current model) */
+.model-badge-inline {
+    font-size: 8px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    display: inline-block;
+}
+
+.model-badge-inline.haiku {
+    background-color: rgba(78, 201, 176, 0.15);
+    color: var(--accent-green);
+    border: 1px solid rgba(78, 201, 176, 0.4);
+}
+
+.model-badge-inline.sonnet {
+    background-color: rgba(206, 145, 120, 0.15);
+    color: var(--accent-orange);
+    border: 1px solid rgba(206, 145, 120, 0.4);
+}
+
+.model-badge-inline.opus {
+    background-color: rgba(220, 220, 170, 0.15);
+    color: var(--accent-yellow);
+    border: 1px solid rgba(220, 220, 170, 0.4);
+}
+
+.model-badge-inline.inactive {
+    background-color: rgba(133, 133, 133, 0.1);
+    color: var(--text-secondary);
+    border: 1px solid rgba(133, 133, 133, 0.3);
+    opacity: 0.6;
+}
+
+.model-agent-current {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.model-agent-last-active {
+    font-size: 8px;
+    color: var(--text-secondary);
+    opacity: 0.6;
+}
+
+/* Live process detection indicators */
+.model-badge-inline.live {
+    animation: live-pulse 2s ease-in-out infinite;
+}
+
+.model-agent-last-active.live {
+    color: var(--accent-green);
+    opacity: 1;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+}
+
+.agent-dot-live {
+    box-shadow: 0 0 4px 1px currentColor;
+    animation: dot-pulse 2s ease-in-out infinite;
+}
+
+@keyframes live-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+}
+
+@keyframes dot-pulse {
+    0%, 100% { box-shadow: 0 0 4px 1px currentColor; }
+    50% { box-shadow: 0 0 8px 2px currentColor; }
 }
 
 /* Model percentage colors */
